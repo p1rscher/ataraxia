@@ -1,0 +1,30 @@
+# Environment variables
+.env
+.env.*
+
+# Bot runtime files
+bot.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+logs/
+
+# Dashboard
+dashboard/
+
+# OS
+.DS_Store
+Thumbs.db
