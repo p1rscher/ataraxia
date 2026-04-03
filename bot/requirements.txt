@@ -1,0 +1,6 @@
+# Ataraxia Bot Requirements
+discord.py==2.7.1
+asyncpg==0.31.0
+python-dotenv==1.2.2
+groq==1.1.2
+sympy==1.14.0
