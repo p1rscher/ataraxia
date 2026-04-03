@@ -1,6 +1,6 @@
 # Ataraxia Discord Bot
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![discord.py](https://img.shields.io/badge/discord.py-2.3+-blue.svg)](https://github.com/Rapptz/discord.py)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
@@ -177,15 +177,14 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for contribution guidelines.
 
 ## 📝 License
 
-This project is licensed under the **AGPLv3 License**.
+This project is licensed under the **MIT License**.
 
 **What this means:**
 - ✅ Free to use, modify, and distribute
 - ✅ Can be used commercially
-- ⚠️ Must disclose source code of any modifications
-- ⚠️ Network use counts as distribution (AGPLv3 requirement)
-- ⚠️ Must include copyright notice
-- ⚠️ No warranty provided
+- ✅ Can be used in private projects
+- ✅ Must include copyright notice and license
+- ✅ No warranty provided
 
 See [LICENSE](LICENSE) for full details.
 
