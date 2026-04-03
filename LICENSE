@@ -46,5 +46,25 @@ This project uses the following open-source libraries:
    License: Apache License 2.0
    https://github.com/groq/groq-python
 
+5. sympy
+   Copyright (c) 2006-2023 SymPy Development Team
+   License: BSD 3-Clause
+   https://github.com/sympy/sympy
+
+6. fastapi
+   Copyright (c) 2018 Sebastián Ramírez
+   License: MIT
+   https://github.com/fastapi/fastapi
+
+7. uvicorn
+   Copyright (c) 2017-present Tom Christie
+   License: BSD 3-Clause
+   https://github.com/encode/uvicorn
+
+8. pydantic
+   Copyright (c) 2017-present Pydantic Services Inc.
+   License: MIT
+   https://github.com/pydantic/pydantic
+
 Full texts of third-party licenses: https://ataraxia-bot.com/licenses
 or see THIRD_PARTY_LICENSES.md
