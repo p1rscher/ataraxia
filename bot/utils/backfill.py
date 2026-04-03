@@ -11,19 +11,19 @@ BACKFILL_LIMIT = 8192 # amount of messages to backfill per channel
 async def backfill_guild_messages(guild, backfill_limit=BACKFILL_LIMIT):
     logger.info(f"Backfilling messages for guild - {guild.name}")
     
-    # Sammle alle Channels mit Message History
+    # Collect all channels with message history
     channels_to_backfill = []
     
     # Text Channels
     channels_to_backfill.extend(guild.text_channels)
     
-    # Voice Channels (haben auch Text-Chat)
+    # Voice channels (also have text chat)
     channels_to_backfill.extend(guild.voice_channels)
     
-    # Forum Channels (haben Threads mit Messages)
+    # Forum channels (have threads with messages)
     channels_to_backfill.extend([ch for ch in guild.channels if hasattr(ch, 'type') and ch.type == discord.ChannelType.forum])
     
-    # Stage Channels (können Text-Chat haben)
+    # Stage channels (can have text chat)
     channels_to_backfill.extend([ch for ch in guild.channels if hasattr(ch, 'type') and ch.type == discord.ChannelType.stage_voice])
     
     for channel in channels_to_backfill:

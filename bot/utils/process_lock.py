@@ -65,7 +65,7 @@ class ProcessLock:
                 logger.warning(f"Failed to remove lock file: {e}")
     
     def _is_process_running(self, pid):
-        """Prüft ob Prozess mit gegebener PID läuft (Windows & Linux)"""
+        """Checks if process with given PID is running (Windows & Linux)"""
         try:
             if sys.platform == "win32":
                 # Windows: use tasklist

@@ -256,6 +256,21 @@ Delete a parent role configuration.
 List all parent roles and their children.
 - **No parameters**
 
+### `/welcome` - Welcome Message System
+
+**`/welcome set [channel] [message]`** 🟠
+Set the welcome message for new members joining the server.
+- **Parameters:**
+  - `channel` - Channel where the welcome message will be sent
+  - `message` - The welcome message text. Use `{user}` to mention the new member and `{server}` for the server name.
+- **Example:** `/welcome set #welcome Welcome to {server}, {user}!`
+
+**`/welcome show`** 🟠
+Show the current welcome message configuration.
+- **No parameters**
+
+---
+
 ### `/bump` - Bump Reminder System
 
 **`/bump setup [role] [channel]`** 🟠
@@ -441,11 +456,12 @@ Safely shutdown the bot (Developer only).
 ```
 1. /autorole enable
 2. /autorole add @Member
-3. /verification setup #verify @Member Welcome!
-4. /log-config set-message #logs
-5. /log-config set-level #level-ups
-6. /xp info (check default settings)
-7. /tempvoice setup
+3. /welcome set #welcome Welcome to {server}, {user}!
+4. /verification setup #verify @Member Welcome!
+5. /log-config set-message #logs
+6. /log-config set-level #level-ups
+7. /xp info (check default settings)
+8. /tempvoice setup
 ```
 
 **Configuring XP system:**

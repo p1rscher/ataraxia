@@ -27,12 +27,12 @@ class ServerStatsCog(commands.Cog):
     async def update_stat_channel(self, channel, stat_type, guild):
         """Update a single stat channel based on the stat_type"""
         try:
-            # Prüfe auf Rate-Limit (max. alle 5 Minuten)
+            # Check for rate limit (max. every 5 minutes)
             last_update = self.last_updated.get(channel.id)
             if last_update:
                 now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
                 time_since_update = (now - last_update).total_seconds()
-                if time_since_update < 300:  # 5 Minuten mindestens zwischen Updates
+                if time_since_update < 300:  # at least 5 minutes between updates
                     logger.debug(f"Skipping update for {channel.id} (too soon, {time_since_update:.0f}s since last)")
                     return
 
@@ -144,7 +144,7 @@ class ServerStatsCog(commands.Cog):
             if not channel:
                 continue
                 
-            # Prüfe auf Rate-Limit (max. alle 5 Minuten bei Events)
+            # Check for rate limit (max. every 5 minutes for events)
             last_update = self.last_updated.get(channel_id)
             now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             if last_update and (now - last_update).total_seconds() < 300:

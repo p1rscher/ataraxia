@@ -136,13 +136,13 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     
     # User joined a voice channel
     if after.channel and after.channel != before.channel:
-        # Prüfe, ob dieser Channel ein Creator-Channel ist
+        # Check if this channel is a creator channel
         creator_info = await db.get_temp_voice_creator_info(after.channel.id)
         
         if creator_info:
             guild_id, category_id = creator_info
             
-            # Bestimme die Kategorie
+            # Determine the category
             if category_id:
                 category = member.guild.get_channel(category_id)
             else:
@@ -174,9 +174,9 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 await before.channel.delete(reason="Temporary voice channel empty")
                 await db.remove_temp_voice_channel(before.channel.id)
             except discord.Forbidden:
-                logger.error(f"Keine Berechtigung, Channel {before.channel.id} zu löschen")
+                logger.error(f"Missing permissions to delete channel {before.channel.id}")
             except discord.NotFound:
                 # Channel already deleted
                 await db.remove_temp_voice_channel(before.channel.id)
             except Exception as e:
-                logger.error(f"Fehler beim Löschen des Temp-Voice-Channels: {e}", exc_info=True)
+                logger.error(f"Error deleting temp voice channel: {e}", exc_info=True)

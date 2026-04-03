@@ -34,7 +34,7 @@ class TempVoiceControlView(View):
             )
             return
         
-        # Wenn nur ein Channel: direkt öffnen
+        # If only one channel: open directly
         if len(member_channels) == 1:
             control_view = ChannelControlView(member_channels[0].id)
             
@@ -50,7 +50,7 @@ class TempVoiceControlView(View):
                 ephemeral=True
             )
         else:
-            # Wenn mehrere Channels: zeige Select mit Optionen
+            # If multiple channels: show select with options
             select_view = ChannelSelectView(member_channels)
             await ctx.response.send_message(
                 "Select the channel you want to manage:",
@@ -62,7 +62,7 @@ class ChannelSelectView(View):
     def __init__(self, channels: list):
         super().__init__(timeout=60)
         
-        # Erstelle Select mit den Channels als Optionen
+        # Create select with channels as options
         options = [
             discord.SelectOption(
                 label=channel.name,
@@ -532,7 +532,7 @@ class TempVoiceCog(commands.Cog):
         
         deleted_count = 0
         
-        # Optional: Lösche alle bestehenden temporären Channels
+        # Optional: Delete all existing temporary channels
         if delete_existing:
             temp_channels = await db.get_all_temp_voice_channels(ctx.guild.id)
             for channel_id, _ in temp_channels:
@@ -598,7 +598,7 @@ class TempVoiceCog(commands.Cog):
             )
             return
 
-        # Get setup - ist jetzt eine LISTE
+        # Get setup - is now a LIST
         setups = await db.get_temp_voice_setup(ctx.guild.id)
         if not setups:
             await ctx.response.send_message(
@@ -608,7 +608,7 @@ class TempVoiceCog(commands.Cog):
             )
             return
         
-        # Hole aktive temporäre Channels
+        # Get active temporary channels
         temp_channels = await db.get_all_temp_voice_channels(ctx.guild.id)
         
         # Create Embed
@@ -617,7 +617,7 @@ class TempVoiceCog(commands.Cog):
             color=discord.Color.blue()
         )
 
-        # Liste alle Creator-Channels auf
+        # List all creator channels
         creator_mentions = []
         for creator_channel_id, category_id in setups:
             creator_channel = ctx.guild.get_channel(creator_channel_id)
@@ -631,7 +631,7 @@ class TempVoiceCog(commands.Cog):
                 inline=False
             )
         
-        # Optional: Zeige Kategorien (wenn verwendet)
+        # Optional: Show categories (if used)
         categories = set()
         for _, category_id in setups:
             if category_id:

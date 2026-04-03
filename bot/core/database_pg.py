@@ -302,38 +302,38 @@ async def init_db():
     logger.info("Database initialized successfully!")
 
 async def close_db():
-    """Schließt die Datenbankverbindung"""
+    """Closes the database connection"""
     global _pool
     if _pool:
         await _pool.close()
 
-# Helper für ISO-Timestamp
+# Helper for ISO timestamp
 def get_iso_now():
-    # Rückgabe als naive datetime in UTC (für asyncpg compatibility)
+    # Return as naive datetime in UTC (for asyncpg compatibility)
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 def ensure_datetime(value):
-    """Konvertiert verschiedene Timestamp-Formate zu einem datetime-Objekt"""
+    """Converts various timestamp formats to a datetime object"""
     
     if value is None:
         return None
     
-    # Wenn es ein datetime ist
+    # If it is a datetime
     if isinstance(value, datetime):
-        # asyncpg/Supabase Pooler hat Probleme mit timezone-aware datetime
-        # Konvertiere zu UTC und entferne timezone info (naive datetime in UTC)
+        # asyncpg/Supabase Pooler has issues with timezone-aware datetime
+        # Convert to UTC and remove timezone info (naive datetime in UTC)
         if value.tzinfo is not None:
-            # Konvertiere zu UTC falls noch nicht
+            # Convert to UTC if not already
             utc_dt = value.astimezone(timezone.utc)
-            # Entferne tzinfo
+            # Remove tzinfo
             return utc_dt.replace(tzinfo=None)
         return value
     
-    # Wenn es ein String ist, parse ihn
+    # If it is a string, parse it
     if isinstance(value, str):
         try:
             dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
-            # Entferne timezone
+            # Remove timezone
             if dt.tzinfo is not None:
                 return dt.astimezone(timezone.utc).replace(tzinfo=None)
             return dt
@@ -433,7 +433,7 @@ async def save_message(message_id: int, guild_id: int, channel_id: int,
         edited_at = ensure_datetime(edited_at)
     
     async with _pool.acquire() as conn:
-        # Prüfe ob Nachricht existiert
+        # Check if message exists
         existing = await conn.fetchrow(
             "SELECT content, current_version, created_at, edited_at FROM messages WHERE message_id = $1",
             message_id
@@ -446,13 +446,13 @@ async def save_message(message_id: int, guild_id: int, channel_id: int,
             msg_edited_at = existing['edited_at']
             
             if old_content != content or force_update:
-                # Bestimme Zeitstempel für Version
+                # Determine timestamp for version
                 if current_version == 1:
                     version_timestamp = edited_at or msg_edited_at or msg_created_at
                 else:
                     version_timestamp = edited_at or msg_edited_at or get_iso_now()
                 
-                # Alte Version speichern
+                # Save old version
                 await conn.execute(
                     "INSERT INTO message_versions (message_id, content, version_number, edited_at) VALUES ($1, $2, $3, $4)",
                     message_id, old_content, current_version, version_timestamp
@@ -706,7 +706,7 @@ async def update_reminded_id(guild_id: int, message_id: int):
         )
 
 async def get_all_bump_guilds():
-    """Gibt alle Gilden zurück, die Bump-Reminder aktiviert haben"""
+    """Returns all guilds that have bump reminders enabled"""
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT * FROM bump_settings WHERE enabled = TRUE"

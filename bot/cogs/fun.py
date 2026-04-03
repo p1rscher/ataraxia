@@ -23,7 +23,7 @@ class FunCog(commands.Cog):
 
     @app_commands.command(name="poll")
     async def poll(self, ctx: discord.Interaction, question: str, options: str):
-        # Erstellt Poll mit Reactions
+        # Creates poll with reactions
         # /poll "Best color?" "Red, Blue, Green"
         option_list = [opt.strip() for opt in options.split(",")]
         if len(option_list) < 2 or len(option_list) > 10:

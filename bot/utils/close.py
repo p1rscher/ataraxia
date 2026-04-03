@@ -13,12 +13,12 @@ active_sessions = [] # list of aiohttp.ClientSession objects to close on shutdow
 async def graceful_shutdown(bot):
     print("Shutting down gracefully...")
     
-    # 1. Schließe alle aktiven aiohttp Sessions
+    # 1. Close all active aiohttp sessions
     for session in active_sessions:
         if not session.closed:
             await session.close()
     
-    # 2. Warte auf alle aktiven Tasks (außer der aktuellen)
+    # 2. Wait for all active tasks (except the current one)
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     if tasks:
         print(f"Waiting for {len(tasks)} tasks to complete...")

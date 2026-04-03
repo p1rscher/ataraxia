@@ -1,32 +1,32 @@
 # 🚀 Ataraxia Bot - Production Deployment Guide
 
-Deployment-Anleitung für **ataraxia-bot.com** auf einem Linux-Server
+Deployment-Tutorial for **ataraxia-bot.com** on a Linux-Server
 
-## 📋 Voraussetzungen
+## 📋 Prerequisites
 
 ### Domain Setup
 - **Domain:** ataraxia-bot.com
 - **DNS A-Records:**
   - `ataraxia-bot.com` → Server IP
   - `www.ataraxia-bot.com` → Server IP
-  - `api.ataraxia-bot.com` → Server IP (optional, für separate API-Domain)
+  - `api.ataraxia-bot.com` → Server IP (optional, for separate API-Domain)
 
 ---
 
-## 🖥️ Server-Software installieren
+## 🖥️ Install Server-Software
 
-### 1. System aktualisieren
+### 1. update System
 ```bash
 sudo apt update && sudo apt upgrade -y
 ```
 
-### 2. Python 3.11+ installieren
+### 2. installing Python 3.11+
 ```bash
 sudo apt install python3.11 python3.11-venv python3-pip -y
 python3.11 --version
 ```
 
-### 3. Node.js 18+ installieren
+### 3. installing Node.js 18+
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install nodejs -y
@@ -34,38 +34,38 @@ node --version
 npm --version
 ```
 
-### 4. PostgreSQL (falls auf gleichem Server)
+### 4. PostgreSQL (if on the same server)
 ```bash
 sudo apt install postgresql postgresql-contrib -y
 sudo systemctl start postgresql
 sudo systemctl enable postgresql
 ```
 
-### 5. Nginx installieren
+### 5. installing Nginx
 ```bash
 sudo apt install nginx -y
 sudo systemctl start nginx
 sudo systemctl enable nginx
 ```
 
-### 6. Certbot für SSL installieren
+### 6. installing Certbot for SSL
 ```bash
 sudo apt install certbot python3-certbot-nginx -y
 ```
 
-### 7. Git installieren (optional, für Deployment)
+### 7. installing Git (optional, for Deployment)
 ```bash
 sudo apt install git -y
 ```
 
 ---
 
-## 📦 Dateien auf Server hochladen
+## 📦 Upload files to Server
 
-### Verzeichnisstruktur auf Server:
+### Folder structure on Server:
 ```
 /opt/ataraxia/
-├── bot/                   # Discord Bot (ehemals "Ataraxia" Ordner)
+├── bot/                   # Discord Bot (once "Ataraxia" Folder)
 │   ├── main.py
 │   ├── cogs/
 │   ├── core/
@@ -74,12 +74,12 @@ sudo apt install git -y
 │   ├── requirements.txt
 │   └── .env
 │
-├── api/                   # FastAPI Backend (separate Komponente)
+├── api/                   # FastAPI Backend (separate component)
 │   ├── main.py
 │   ├── requirements.txt
 │   └── .env
 │
-└── dashboard/             # Next.js Frontend (separate Komponente)
+└── dashboard/             # Next.js Frontend (separate component)
     ├── app/
     ├── public/
     ├── package.json
@@ -87,52 +87,52 @@ sudo apt install git -y
     └── .env.local
 ```
 
-**💡 Tipp:** Auf deinem lokalen System solltest du die gleiche Struktur haben:
+**💡 Hint:** You should have the same structure on your local system:
 ```
 Serenity/
-├── Ataraxia/          # Bot-Code (wird zu "bot" auf Server)
+├── Ataraxia/          # Bot-Code (will be "bot" on Server)
 ├── api/               # API-Code
 └── dashboard/         # Dashboard-Code
 ```
 
-### Dateien hochladen (via SCP/SFTP):
+### Upload Files (via SCP/SFTP):
 ```bash
-# Von deinem Windows PC aus (aus dem Serenity/ Verzeichnis):
+# On Windows (from Parent Folder):
 scp -r Ataraxia/ user@server-ip:/opt/ataraxia/bot/
 scp -r api/ user@server-ip:/opt/ataraxia/api/
 scp -r dashboard/ user@server-ip:/opt/ataraxia/dashboard/
 ```
 
-**Oder via Git (3 separate Repos empfohlen):**
+**Or via Git (3 separate Repos empfohlen):**
 ```bash
 cd /opt/ataraxia
 
 # Bot
-git clone https://github.com/dein-username/ataraxia-bot.git bot
+git clone https://github.com/your-username/ataraxia-bot.git bot
 
 # API
-git clone https://github.com/dein-username/ataraxia-api.git api
+git clone https://github.com/your-username/ataraxia-api.git api
 
 # Dashboardbot
-git clone https://github.com/dein-username/ataraxia-dashboard.git dashboard
+git clone https://github.com/your-username/ataraxia-dashboard.git dashboard
 ```
 
-**Oder Monorepo (alle zusammen):**
+**or Monorepo (all at once):**
 ```bash
 cd /opt/ataraxia
-git clone https://github.com/dein-username/ataraxia.git .
-# Dann hast du automatisch die Struktur mit bot/, api/, dashboard/
+git clone https://github.com/your-username/ataraxia.git .
+# You'll have the same structure with bot/, api/, dashboard/
 ```
 
 ---
 
-## ⚙️ Environment-Variablen konfigurieren
+## ⚙️ configure Environment-Vars
 
 ### 1. Bot `.env` (/opt/ataraxia/Ataraxia/.env)
 ```env
-DISCORD_TOKEN=dein_discord_bot_token
+DISCORD_TOKEN=your_discord_bot_token
 DATABASE_URL=postgresql://user:password@localhost/ataraxia
-OPENAI_API_KEY=dein_openai_key
+OPENAI_API_KEY=your_openai_key
 ```
 
 ### 2. API `.env` (/opt/ataraxia/api/.env)
@@ -147,27 +147,27 @@ NEXT_PUBLIC_API_URL=https://ataraxia-bot.com/api
 NEXT_PUBLIC_USE_MOCK_DATA=false
 
 # Discord OAuth
-DISCORD_CLIENT_ID=dein_client_id
-DISCORD_CLIENT_SECRET=dein_client_secret
+DISCORD_CLIENT_ID=your_client_id
+DISCORD_CLIENT_SECRET=your_client_secret
 
 # NextAuth
-NEXTAUTH_SECRET=generiere_einen_starken_secret
+NEXTAUTH_SECRET=generate_a_strong_secret
 NEXTAUTH_URL=https://ataraxia-bot.com
 
-# Discord Bot Token (für Discord API calls)
-DISCORD_BOT_TOKEN=dein_discord_bot_token
+# Discord Bot Token (for Discord API calls)
+DISCORD_BOT_TOKEN=your_discord_bot_token
 ```
 
-**NEXTAUTH_SECRET generieren:**
+**Generate NEXTAUTH_SECRET:**
 ```bash
 openssl rand -base64 32
 ```
 
 ---
 
-## 🔧 Services einrichten
+## 🔧 Implement Services
 
-### 1. Python Virtual Environment für Bot & API
+### 1. Python Virtual Environment for Bot & API
 ```bash
 cd /opt/ataraxia
 python3.11 -m venv venv
@@ -182,7 +182,7 @@ cd /opt/ataraxia/api
 pip install -r requirements.txt
 ```
 
-**requirements.txt für API erstellen (falls noch nicht vorhanden):**
+**create requirements.txt for API (if not yet):**
 ```txt
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
@@ -200,7 +200,7 @@ npm run build
 
 ---
 
-## 🔄 Systemd Services erstellen
+## 🔄 Create Systemd Services
 
 ### 1. Discord Bot Service
 ```bash
@@ -272,23 +272,23 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-### Services aktivieren und starten:
+### Activate and start Services:
 ```bash
-# Berechtigungen setzen
+# set Permission
 sudo chown -R www-data:www-data /opt/ataraxia
 
-# Services aktivieren
+# activate Services
 sudo systemctl daemon-reload
 sudo systemctl enable ataraxia-bot
 sudo systemctl enable ataraxia-api
 sudo systemctl enable ataraxia-dashboard
 
-# Services starten
+# start Services
 sudo systemctl start ataraxia-bot
 sudo systemctl start ataraxia-api
 sudo systemctl start ataraxia-dashboard
 
-# Status überprüfen
+# check Status
 sudo systemctl status ataraxia-bot
 sudo systemctl status ataraxia-api
 sudo systemctl status ataraxia-dashboard
@@ -296,9 +296,9 @@ sudo systemctl status ataraxia-dashboard
 
 ---
 
-## 🌐 Nginx Reverse Proxy konfigurieren
+## 🌐 Nginx Reverse Proxy Configuration
 
-### Nginx Config erstellen:
+### Create Nginx Config:
 ```bash
 sudo nano /etc/nginx/sites-available/ataraxia-bot.com
 ```
@@ -326,7 +326,7 @@ server {
     listen 443 ssl http2;
     server_name ataraxia-bot.com www.ataraxia-bot.com;
 
-    # SSL Zertifikate (werden von Certbot hinzugefügt)
+    # SSL certificates (will be added by Certbot)
     # ssl_certificate /etc/letsencrypt/live/ataraxia-bot.com/fullchain.pem;
     # ssl_certificate_key /etc/letsencrypt/live/ataraxia-bot.com/privkey.pem;
 
@@ -335,7 +335,7 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
 
-    # API Proxy (alle /api requests)
+    # API Proxy (all /api requests)
     location /api/ {
         proxy_pass http://api_backend/api/;
         proxy_http_version 1.1;
@@ -350,7 +350,7 @@ server {
         proxy_connect_timeout 75s;
     }
 
-    # Dashboard Frontend (alle anderen requests)
+    # Dashboard Frontend (all other requests)
     location / {
         proxy_pass http://dashboard_frontend;
         proxy_http_version 1.1;
@@ -374,102 +374,102 @@ server {
 }
 ```
 
-### Nginx Config aktivieren:
+### Activate Nginx Config:
 ```bash
-# Symlink erstellen
+# create Symlink
 sudo ln -s /etc/nginx/sites-available/ataraxia-bot.com /etc/nginx/sites-enabled/
 
-# Nginx Config testen
+# test Nginx Config
 sudo nginx -t
 
-# Nginx neu laden
+# reload Nginx
 sudo systemctl reload nginx
 ```
 
 ---
 
-## 🔒 SSL Zertifikat mit Let's Encrypt
+## 🔒 SSL Certificate via Let's Encrypt
 
 ```bash
-# SSL Zertifikat für ataraxia-bot.com holen
+# get SSL Zertifikat for ataraxia-bot.com
 sudo certbot --nginx -d ataraxia-bot.com -d www.ataraxia-bot.com
 
-# Folge den Prompts:
-# 1. Email eingeben
-# 2. Terms akzeptieren
-# 3. "Redirect HTTP to HTTPS" auswählen (Option 2)
+# Follow the Prompts:
+# 1. input Email
+# 2. accept Terms
+# 3. select "Redirect HTTP to HTTPS" (Option 2)
 
-# Certbot richtet automatisch SSL ein und aktualisiert die Nginx Config
+# Certbot automatically implements SSL and updates the Nginx Config
 ```
 
-**Auto-Renewal testen:**
+**test Auto-Renewal:**
 ```bash
 sudo certbot renew --dry-run
 ```
 
 ---
 
-## 🧪 Deployment testen
+## 🧪 test Deployment
 
-### 1. Services überprüfen:
+### 1. monitor Services:
 ```bash
-# Logs anschauen
+# check logs
 sudo journalctl -u ataraxia-bot -f
 sudo journalctl -u ataraxia-api -f
 sudo journalctl -u ataraxia-dashboard -f
 ```
 
-### 2. API testen:
+### 2. test API:
 ```bash
 curl https://ataraxia-bot.com/api/health
 # Expected: {"status": "healthy"}
 ```
 
-### 3. Dashboard öffnen:
+### 3. open Dashboard:
 ```
 https://ataraxia-bot.com
 ```
 
 ### 4. Discord Bot Status:
 ```bash
-# Bot sollte online sein
+# Bot should be online
 sudo systemctl status ataraxia-bot
 ```
 
 ---
 
-## 🔄 Updates deployen
+## 🔄 deploy Updates
 
-### Manuelles Update:
+### manual Update:
 ```bash
-# Services stoppen
+# stop Services
 sudo systemctl stop ataraxia-bot
 sudo systemctl stop ataraxia-api
 sudo systemctl stop ataraxia-dashboard
 
-# Neue Dateien hochladen (via SCP oder Git pull)
+# upload new file (via SCP or Git pull)
 cd /opt/ataraxia
 git pull
 
-# Dashboard neu bauen
+# rebuild dashboard
 cd /opt/ataraxia/dashboard
 npm install
 npm run build
 
-# Services neustarten
+# start Services
 sudo systemctl start ataraxia-bot
 sudo systemctl start ataraxia-api
 sudo systemctl start ataraxia-dashboard
 ```
 
-### Automatisches Deployment (Optional mit GitHub Actions):
-Erstelle `.github/workflows/deploy.yml` im Repository.
+### automatic Deployment (optional via GitHub Actions):
+create `.github/workflows/deploy.yml` in the Repository.
 
 ---
 
 ## 📊 Monitoring & Logs
 
-### Logs ansehen:
+### check Logs:
 ```bash
 # Bot Logs
 sudo journalctl -u ataraxia-bot -n 100 --no-pager
@@ -495,52 +495,52 @@ sudo systemctl status nginx
 
 ---
 
-## 🛡️ Firewall einrichten (UFW)
+## 🛡️ implement Firewall (UFW)
 
 ```bash
-# UFW installieren
+# install UFW
 sudo apt install ufw -y
 
 # Default Policies
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 
-# Ports öffnen
+# open ports
 sudo ufw allow ssh
 sudo ufw allow http
 sudo ufw allow https
 
-# Firewall aktivieren
+# activate firewall
 sudo ufw enable
 
-# Status überprüfen
+# check Status
 sudo ufw status
 ```
 
 ---
 
-## 📝 Checkliste für Production
+## 📝 Checklist for production
 
-- [ ] DNS A-Records zeigen auf Server-IP
-- [ ] PostgreSQL Datenbank läuft (lokal oder extern)
-- [ ] Environment-Variablen gesetzt (.env Dateien)
-- [ ] Python Virtual Environment erstellt & Dependencies installiert
-- [ ] Dashboard gebaut (`npm run build`)
-- [ ] Systemd Services erstellt und aktiviert
-- [ ] Nginx Reverse Proxy konfiguriert
-- [ ] SSL Zertifikat installiert (Let's Encrypt)
-- [ ] Firewall konfiguriert (nur HTTP, HTTPS, SSH)
-- [ ] Bot erscheint online in Discord
-- [ ] API erreichbar unter `/api/health`
-- [ ] Dashboard lädt unter `https://ataraxia-bot.com`
-- [ ] Discord OAuth Login funktioniert
-- [ ] Logs werden korrekt geschrieben
+- [ ] DNS A-Records point to Server-IP
+- [ ] PostgreSQL database is running (local or external)
+- [ ] set Environment-Vars  (.env files)
+- [ ] Python Virtual Environment created & Dependencies installed
+- [ ] Dashboard built (`npm run build`)
+- [ ] Systemd Services created and activated
+- [ ] Nginx Reverse Proxy configured
+- [ ] SSL Zertifikat installed (Let's Encrypt)
+- [ ] Firewall configured (only HTTP, HTTPS, SSH)
+- [ ] Bot appears online in Discord
+- [ ] API reachable under `/api/health`
+- [ ] Dashboard loading under `https://ataraxia-bot.com`
+- [ ] Discord OAuth Login is working
+- [ ] Logs are written correctly
 
 ---
 
 ## 🚨 Troubleshooting
 
-### Bot startet nicht:
+### Bot not starting:
 ```bash
 sudo journalctl -u ataraxia-bot -n 50
 # Check: Discord Token, Database Connection, Berechtigungen
@@ -552,7 +552,7 @@ sudo systemctl status ataraxia-api
 # Check: Port 8000 läuft, Nginx Proxy Config
 ```
 
-### Dashboard lädt nicht:
+### Dashboard not loading:
 ```bash
 sudo systemctl status ataraxia-dashboard
 cd /opt/ataraxia/dashboard
@@ -560,7 +560,7 @@ npm run build
 # Check: .env.local, Build-Fehler
 ```
 
-### SSL Probleme:
+### SSL Problems:
 ```bash
 sudo certbot certificates
 sudo nginx -t
@@ -569,22 +569,22 @@ sudo nginx -t
 
 ---
 
-## 📚 Nützliche Befehle
+## 📚 Useful Commands
 
 ```bash
-# Services neustarten
+# restart services
 sudo systemctl restart ataraxia-bot
 sudo systemctl restart ataraxia-api
 sudo systemctl restart ataraxia-dashboard
 sudo systemctl restart nginx
 
-# Logs live ansehen
+# watch logs live
 sudo journalctl -u ataraxia-bot -f
 
-# Dashboard neu bauen
+# rebuild dashboard
 cd /opt/ataraxia/dashboard && npm run build
 
-# Disk Space prüfen
+# check disk space
 df -h
 
 # Memory Usage
@@ -596,9 +596,9 @@ htop
 
 ---
 
-## 🎉 Fertig!
+## 🎉 Done!
 
-Deine Ataraxia Bot Installation sollte jetzt auf **https://ataraxia-bot.com** laufen!
+Your Ataraxia Bot installation should run on **https://ataraxia-bot.com**
 
 **URLs:**
 - Dashboard: https://ataraxia-bot.com

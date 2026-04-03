@@ -20,8 +20,8 @@ Du baust ein **Web-Dashboard** für einen Discord Bot. User können hier ihre Se
 
 #### **C) Server-Dashboard** (`/dashboard/[guild_id]`)
 Tabs/Sections:
-1. **XP Settings** - XP Einstellungen
-2. **Multipliers** - XP Multiplikatoren
+1. **XP Settings** - XP settings
+2. **Multipliers** - XP Multipliers
 3. **Log Channels** - Log-Kanäle
 4. **Leaderboard** - Top User
 5. **Stats** - Statistiken (optional)

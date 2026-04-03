@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Wähle Datenbank basierend auf Umgebungsvariable
+# Select database based on environment variable
 load_dotenv()
 if os.getenv("DATABASE_URL"):
     from core import database_pg as db
