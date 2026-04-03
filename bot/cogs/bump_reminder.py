@@ -5,6 +5,7 @@ from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
 import asyncio
 import logging
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class BumpReminder(commands.Cog):
         bump_role = ctx.guild.get_role(settings['bump_role_id'])
         reminder_channel = ctx.guild.get_channel(settings['reminder_channel_id'])
         
-        embed = discord.Embed(title="📊 Bump Reminder Status", color=discord.Color.blue())
+        embed = discord.Embed(title="📊 Bump Reminder Status", color=await get_guild_color(ctx.guild_id))
         embed.add_field(name="Status", value="✅ Enabled", inline=False)
         embed.add_field(name="Bump Role", value=bump_role.mention if bump_role else "❌ Not found", inline=True)
         embed.add_field(name="Reminder Channel", value=reminder_channel.mention if reminder_channel else "❌ Not found", inline=True)

@@ -4,6 +4,7 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 from core import database_pg as db
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,7 @@ class ParentRolesCog(commands.Cog):
         
         embed = discord.Embed(
             title="👪 Parent Role Configuration",
-            color=discord.Color.blue()
+            color=await get_guild_color(ctx.guild_id)
         )
         
         for config in parent_configs:

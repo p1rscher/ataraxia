@@ -8,6 +8,7 @@ from sympy import symbols, solve, Matrix, sympify, I, sqrt, pi, E, root
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 import re
 import asyncio
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class MathCog(commands.Cog):
         embed = discord.Embed(
             title="📚 Math Module Help",
             description="Complete guide to mathematical operations",
-            color=discord.Color.blue()
+            color=await get_guild_color(interaction.guild_id)
         )
         
         # Basic Operations
@@ -214,7 +215,7 @@ class MathCog(commands.Cog):
                 if num_digits > 1000:
                     embed = discord.Embed(
                         title="🧮 Calculator",
-                        color=discord.Color.blue()
+                        color=await get_guild_color(interaction.guild_id)
                     )
                     embed.add_field(name="Expression", value=f"`{expression.replace('**', '^')}`", inline=False)
                     embed.add_field(
@@ -231,7 +232,7 @@ class MathCog(commands.Cog):
             if len(result_str) > 1900:
                 embed = discord.Embed(
                     title="🧮 Calculator",
-                    color=discord.Color.blue()
+                    color=await get_guild_color(interaction.guild_id)
                 )
                 embed.add_field(name="Expression", value=f"`{expression.replace('**', '^')}`", inline=False)
                 embed.add_field(
@@ -246,7 +247,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="🧮 Calculator",
-                color=discord.Color.blue()
+                color=await get_guild_color(interaction.guild_id)
             )
             embed.add_field(name="Expression", value=f"`{expression.replace('**', '^')}`", inline=False)
             
@@ -324,7 +325,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="🔍 Equation Solver",
-                color=discord.Color.green()
+                color=await get_guild_color(interaction.guild_id)
             )
             # Replace symbols in equation display
             equation_display = equation.replace('**', '^')
@@ -407,7 +408,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="🔢 System of Equations Solver",
-                color=discord.Color.purple()
+                color=await get_guild_color(interaction.guild_id)
             )
             
             # Display equations
@@ -480,7 +481,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="📐 Derivative",
-                color=discord.Color.blue()
+                color=await get_guild_color(interaction.guild_id)
             )
             # Format output with lowercase symbols
             derivative_str = str(derivative).replace('**', '^').replace('E', 'e').replace('I', 'i').replace('pi', 'π')
@@ -523,7 +524,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="∫ Integration",
-                color=discord.Color.green()
+                color=await get_guild_color(interaction.guild_id)
             )
             
             if definite:
@@ -644,7 +645,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="Σ Sum",
-                color=discord.Color.orange()
+                color=await get_guild_color(interaction.guild_id)
             )
             embed.add_field(name="Expression", value=f"`Σ({variable}={start_str} to {end_str}) {expression.replace('**', '^')}`", inline=False)
             embed.add_field(name="Result", value=f"`{result_str}`", inline=False)
@@ -716,7 +717,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="📊 Limit",
-                color=discord.Color.purple()
+                color=await get_guild_color(interaction.guild_id)
             )
             embed.add_field(name="Function", value=f"`f({variable}) = {function.replace('**', '^')}`", inline=False)
             
@@ -761,7 +762,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="✖️ Matrix Multiplication",
-                color=discord.Color.blue()
+                color=await get_guild_color(interaction.guild_id)
             )
             embed.add_field(name="Matrix A", value=f"```{mat_a}```", inline=True)
             embed.add_field(name="Matrix B", value=f"```{mat_b}```", inline=True)
@@ -793,7 +794,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="🔢 Matrix Determinant",
-                color=discord.Color.green()
+                color=await get_guild_color(interaction.guild_id)
             )
             embed.add_field(name="Matrix", value=f"```{mat}```", inline=False)
             embed.add_field(name="Determinant", value=f"`{det}`", inline=False)
@@ -828,7 +829,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="🔄 Matrix Inverse",
-                color=discord.Color.purple()
+                color=await get_guild_color(interaction.guild_id)
             )
             embed.add_field(name="Matrix", value=f"```{mat}```", inline=False)
             embed.add_field(name="Inverse", value=f"```{inv}```", inline=False)
@@ -860,7 +861,7 @@ class MathCog(commands.Cog):
             
             embed = discord.Embed(
                 title="🎯 Eigenvalues & Eigenvectors",
-                color=discord.Color.gold()
+                color=await get_guild_color(interaction.guild_id)
             )
             embed.add_field(name="Matrix", value=f"```{mat}```", inline=False)
             

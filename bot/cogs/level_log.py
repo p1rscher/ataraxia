@@ -4,6 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 import logging
 from core import database_pg as db
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class LevelLogCog(commands.Cog):
         embed = discord.Embed(
             title="✅ Level Log Channel Set",
             description=f"Level-up notifications will now be sent to {channel.mention}",
-            color=discord.Color.green()
+            color=await get_guild_color(ctx.guild.id, 'color_level_up')
         )
         embed.set_footer(text="Use /levellog remove to disable this feature")
         
@@ -62,7 +63,7 @@ class LevelLogCog(commands.Cog):
         embed = discord.Embed(
             title="✅ Level Log Channel Removed",
             description="Level-up notifications will now be sent in the channel where XP was gained.",
-            color=discord.Color.orange()
+            color=await get_guild_color(ctx.guild.id, 'color_level_up')
         )
         
         await ctx.response.send_message(embed=embed)
@@ -77,20 +78,17 @@ class LevelLogCog(commands.Cog):
         
         embed = discord.Embed(
             title="📊 Level Log Status",
-            color=discord.Color.blurple()
+            color=await get_guild_color(ctx.guild.id, 'color_level_up')
         )
         
         if channel_id:
             channel = ctx.guild.get_channel(channel_id)
             if channel:
                 embed.description = f"✅ Level-up notifications are sent to {channel.mention}"
-                embed.color = discord.Color.green()
             else:
                 embed.description = "⚠️ Configured channel no longer exists. Please set a new one."
-                embed.color = discord.Color.orange()
         else:
             embed.description = "📝 No dedicated channel configured.\nLevel-ups are announced where XP is gained."
-            embed.color = discord.Color.light_gray()
         
         embed.set_footer(text="Use /levellog set to configure a channel")
         

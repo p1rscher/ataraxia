@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 from core import database_pg as db
 import logging
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class VoiceXPRequirements(commands.Cog):
         embed = discord.Embed(
             title="🎤 Voice XP Requirements",
             description="Current requirements for earning Voice XP",
-            color=discord.Color.blue()
+            color=await get_guild_color(interaction.guild_id)
         )
         
         embed.add_field(
@@ -85,7 +86,7 @@ class VoiceXPRequirements(commands.Cog):
         embed = discord.Embed(
             title="✅ AFK Requirement Updated",
             description=f"AFK users {status} Voice XP",
-            color=discord.Color.green()
+            color=await get_guild_color(interaction.guild_id)
         )
         
         await interaction.response.send_message(embed=embed)
@@ -108,7 +109,7 @@ class VoiceXPRequirements(commands.Cog):
         embed = discord.Embed(
             title="✅ Deaf Requirement Updated",
             description=f"Deafened users {status} Voice XP",
-            color=discord.Color.green()
+            color=await get_guild_color(interaction.guild_id)
         )
         
         await interaction.response.send_message(embed=embed)
@@ -131,7 +132,7 @@ class VoiceXPRequirements(commands.Cog):
         embed = discord.Embed(
             title="✅ Muted Requirement Updated",
             description=f"Muted users {status} Voice XP",
-            color=discord.Color.green()
+            color=await get_guild_color(interaction.guild_id)
         )
         
         await interaction.response.send_message(embed=embed)
@@ -154,7 +155,7 @@ class VoiceXPRequirements(commands.Cog):
         embed = discord.Embed(
             title="✅ Alone-in-Channel Requirement Updated",
             description=f"Users alone in a voice channel {status} Voice XP",
-            color=discord.Color.green()
+            color=await get_guild_color(interaction.guild_id)
         )
         
         await interaction.response.send_message(embed=embed)
@@ -176,7 +177,7 @@ class VoiceXPRequirements(commands.Cog):
         embed = discord.Embed(
             title="✅ Voice XP Requirements Reset",
             description="All Voice XP requirements have been reset to defaults",
-            color=discord.Color.green()
+            color=await get_guild_color(interaction.guild_id)
         )
         
         embed.add_field(name="AFK Users", value="❌ Will NOT earn XP", inline=True)

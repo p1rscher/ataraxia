@@ -4,6 +4,7 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 from core import database_pg as db
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ class AutoroleCog(commands.Cog):
         embed = discord.Embed(
             title="🎭 Autorole Configuration",
             description=f"**Status:** {enabled_status}\n\n**Roles:**\n{role_list}",
-            color=discord.Color.blue()
+            color=await get_guild_color(ctx.guild_id)
         )
         
         await ctx.response.send_message(embed=embed, ephemeral=True)

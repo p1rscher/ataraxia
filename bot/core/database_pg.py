@@ -299,6 +299,18 @@ async def init_db():
             )
         """)
 
+        # Customizable Embed Colors
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS embed_colors (
+                guild_id BIGINT PRIMARY KEY,
+                color_primary INTEGER NOT NULL DEFAULT 5793266,
+                color_welcome INTEGER NOT NULL DEFAULT 5763719,
+                color_level_up INTEGER NOT NULL DEFAULT 16766720,
+                color_success INTEGER NOT NULL DEFAULT 5763719,
+                color_counting INTEGER NOT NULL DEFAULT 3447003
+            )
+        """)
+
     logger.info("Database initialized successfully!")
 
 async def close_db():
@@ -1486,3 +1498,40 @@ async def get_level_roles_up_to(guild_id: int, level: int):
             guild_id, level
         )
         return [(row['level'], row['role_id']) for row in rows] if rows else []
+# ==================== EMBED COLORS ====================
+
+DEFAULT_COLORS = {
+    'color_primary': 5793266,
+    'color_welcome': 5763719,
+    'color_level_up': 16766720,
+    'color_success': 5763719,
+    'color_counting': 3447003,
+}
+
+async def get_guild_colors(guild_id: int) -> dict:
+    """Returns all embed colors for a guild, falling back to defaults."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT color_primary, color_welcome, color_level_up, color_success, color_counting FROM embed_colors WHERE guild_id = $1",
+            guild_id
+        )
+    if row:
+        return dict(row)
+    return DEFAULT_COLORS.copy()
+
+async def set_guild_color(guild_id: int, color_type: str, color: int):
+    """Sets a specific embed color for a guild."""
+    valid = {'color_primary', 'color_welcome', 'color_level_up', 'color_success', 'color_counting'}
+    if color_type not in valid:
+        raise ValueError(f"Invalid color type: {color_type}")
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            f"INSERT INTO embed_colors (guild_id, {color_type}) VALUES ($1, $2) "
+            f"ON CONFLICT (guild_id) DO UPDATE SET {color_type} = $2",
+            guild_id, color
+        )
+
+async def reset_guild_colors(guild_id: int):
+    """Resets all embed colors for a guild to defaults."""
+    async with _pool.acquire() as conn:
+        await conn.execute("DELETE FROM embed_colors WHERE guild_id = $1", guild_id)

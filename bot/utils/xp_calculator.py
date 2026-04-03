@@ -2,6 +2,7 @@
 import discord
 import logging
 from core import database_pg as db
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ async def check_level_up(user_id: int, guild_id: int, bot: discord.Client, fallb
                 embed = discord.Embed(
                     title="🎉 Level Up!",
                     description=f"{member.mention} has reached **Level {current_level}**!",
-                    color=discord.Color.gold()
+                    color=await get_guild_color(guild_id, 'color_level_up')
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
                 embed.add_field(name="Current XP", value=f"{current_xp:,}", inline=True)

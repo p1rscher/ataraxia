@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ui import View, Select, Button
 import logging
 from core import database_pg as db
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class TempVoiceControlView(View):
             embed = discord.Embed(
                 title="🎤 Voice Channel Control",
                 description=f"Manage your channel: {member_channels[0].mention}",
-                color=discord.Color.blue()
+                color=await get_guild_color(ctx.guild_id)
             )
 
             await ctx.response.send_message(
@@ -89,7 +90,7 @@ class ChannelSelectView(View):
         embed = discord.Embed(
             title="🎤 Voice Channel Control",
             description=f"Manage your channel: <#{channel_id}>",
-            color=discord.Color.blue()
+            color=await get_guild_color(interaction.guild_id)
         )
         
         await interaction.response.send_message(
@@ -444,7 +445,7 @@ class TempVoiceCog(commands.Cog):
                 "👑 **Transfer** - Transfer ownership\n"
                 "🗑️ **Delete** - Delete channel"
             ),
-            color=discord.Color.blurple()
+            color=await get_guild_color(ctx.guild.id)
         )
         embed.set_footer(text="Only channel owners can use these functions")
 
@@ -614,7 +615,7 @@ class TempVoiceCog(commands.Cog):
         # Create Embed
         embed = discord.Embed(
             title="🎤 Temporary Voice System Configuration",
-            color=discord.Color.blue()
+            color=await get_guild_color(ctx.guild_id)
         )
 
         # List all creator channels

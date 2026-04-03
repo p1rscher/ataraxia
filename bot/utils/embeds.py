@@ -2,6 +2,15 @@
 import discord
 import datetime
 import asyncio
+from core import database_pg as db
+
+
+async def get_guild_color(guild_id: int, color_type: str = 'color_primary') -> discord.Color:
+    """Fetches the guild's embed color for the given type."""
+    if guild_id is None:
+        return discord.Color(5793266)
+    colors = await db.get_guild_colors(guild_id)
+    return discord.Color(colors.get(color_type, 5793266))
 
 
 async def make_edit_embed(before: discord.Message, diff_text: str) -> discord.Embed:

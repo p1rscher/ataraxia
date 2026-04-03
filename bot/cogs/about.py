@@ -13,7 +13,7 @@ class AboutCog(commands.Cog):
         embed = discord.Embed(
             title="🤖 Ataraxia Bot",
             description="Advanced community management bot",
-            color=discord.Color.blue()
+            color=discord.Color(5793266)
         )
         
         embed.add_field(

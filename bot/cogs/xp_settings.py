@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from core import database_pg as db
+from utils.embeds import get_guild_color
 
 class XPSettingsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -135,7 +136,7 @@ class XPSettingsCog(commands.Cog):
         
         embed = discord.Embed(
             title="⚙️ XP Settings",
-            color=discord.Color.blue()
+            color=await get_guild_color(interaction.guild.id)
         )
         
         # Message cooldown
@@ -275,7 +276,7 @@ class XPSettingsCog(commands.Cog):
         
         embed = discord.Embed(
             title="🔢 XP Multipliers",
-            color=discord.Color.gold()
+            color=await get_guild_color(interaction.guild.id)
         )
         
         # Channel multipliers

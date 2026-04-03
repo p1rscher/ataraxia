@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class LevelRolesCog(commands.Cog):
             embed = discord.Embed(
                 title="✅ Level Role Added",
                 description=f"Users will now receive {role.mention} when reaching **Level {level}**",
-                color=discord.Color.green()
+                color=await get_guild_color(interaction.guild_id)
             )
             await interaction.response.send_message(embed=embed)
             
@@ -76,7 +77,7 @@ class LevelRolesCog(commands.Cog):
             embed = discord.Embed(
                 title="✅ Level Role Removed",
                 description=f"Removed {role_mention} from **Level {level}**",
-                color=discord.Color.green()
+                color=await get_guild_color(interaction.guild_id)
             )
             await interaction.response.send_message(embed=embed)
             
@@ -97,7 +98,7 @@ class LevelRolesCog(commands.Cog):
             embed = discord.Embed(
                 title="🎯 Level Role Rewards",
                 description="Roles that are automatically given when reaching specific levels",
-                color=discord.Color.blue()
+                color=await get_guild_color(interaction.guild_id)
             )
             
             # Sort by level
@@ -179,7 +180,7 @@ class LevelRolesCog(commands.Cog):
             embed = discord.Embed(
                 title="🏆 XP Leaderboard",
                 description=f"Top {len(leaderboard_data)} members by XP",
-                color=discord.Color.gold()
+                color=await get_guild_color(interaction.guild_id)
             )
             
             leaderboard_text = ""
@@ -238,7 +239,7 @@ class LevelRolesCog(commands.Cog):
             
             embed = discord.Embed(
                 title=f"📊 Rank - {target.display_name}",
-                color=discord.Color.blue()
+                color=await get_guild_color(interaction.guild_id)
             )
             embed.set_thumbnail(url=target.display_avatar.url)
             

@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ class InsightsCog(commands.Cog):
     @info_group.command(name="server", description="Show server information")
     @app_commands.guild_only()
     async def serverinfo(self, ctx: discord.Interaction):
-        embed = discord.Embed(title=f"📊 {ctx.guild.name}")
+        embed = discord.Embed(title=f"📊 {ctx.guild.name}", color=await get_guild_color(ctx.guild_id))
         embed.add_field(name="Members", value=ctx.guild.member_count)
         embed.add_field(name="Created", value=ctx.guild.created_at.strftime("%Y-%m-%d"))
         embed.add_field(name="Boost Level", value=ctx.guild.premium_tier)
@@ -27,7 +28,7 @@ class InsightsCog(commands.Cog):
     @app_commands.guild_only()
     async def memberinfo(self, ctx: discord.Interaction, member: discord.Member):
         # Account age, join date, roles, activity
-        embed = discord.Embed(title=f"👤 {member.display_name}")
+        embed = discord.Embed(title=f"👤 {member.display_name}", color=await get_guild_color(ctx.guild_id))
         embed.add_field(name="Account Age", value=f"{(discord.utils.utcnow() - member.created_at).days} days")
         embed.add_field(name="Join Date", value=member.joined_at.strftime("%Y-%m-%d"))
         embed.add_field(name="Roles", value=", ".join([role.name for role in member.roles if role.name != "@everyone"]), inline=False)

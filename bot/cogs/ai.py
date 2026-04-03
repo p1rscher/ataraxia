@@ -10,6 +10,7 @@ from collections import defaultdict
 import time
 from datetime import datetime, timezone, timedelta
 from core import database_pg as db
+from utils.embeds import get_guild_color
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -258,7 +259,7 @@ class AICog(commands.Cog):
             # Build response embed
             embed = discord.Embed(
                 title=f"{settings['emoji']} AI Response",
-                color=self._get_tier_color(tier)
+                color=await get_guild_color(ctx.guild_id if ctx.guild_id else None)
             )
             
             # Add question field
@@ -333,7 +334,7 @@ class AICog(commands.Cog):
         
         embed = discord.Embed(
             title=f"{settings['emoji']} Your AI Status",
-            color=self._get_tier_color(tier)
+            color=await get_guild_color(ctx.guild_id if ctx.guild_id else None)
         )
         
         embed.add_field(

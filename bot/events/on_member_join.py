@@ -2,6 +2,7 @@ import discord
 import logging
 from typing import Optional
 from core import database_pg as db
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ async def on_member_join(member: discord.Member):
         if channel:
             try:
                 text = welcome['message'].replace("{user}", member.mention).replace("{server}", member.guild.name)
-                embed = discord.Embed(description=text, color=discord.Color.blurple())
+                embed = discord.Embed(description=text, color=await get_guild_color(member.guild.id, 'color_welcome'))
                 embed.set_author(name=str(member), icon_url=member.display_avatar.url)
                 embed.set_thumbnail(url=member.display_avatar.url)
                 embed.set_footer(text=f"{member.guild.name} • {member.guild.member_count} members")

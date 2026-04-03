@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import logging
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 db = None  # Database reference to be set from main.py
@@ -30,7 +31,7 @@ class AdminStatsCog(commands.Cog):
             # Create embed
             embed = discord.Embed(
                 title="📊 Bot Statistics",
-                color=0xf88aef # Light purple
+                color=await get_guild_color(ctx.guild.id if ctx.guild else None)
             )
             
             # General stats

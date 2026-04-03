@@ -4,6 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 from core import database_pg as db
 import logging
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class PremiumCog(commands.Cog):
         embed = discord.Embed(
             title="💎 Ataraxia Premium",
             description="Unlock faster AI, more features, and support development!",
-            color=discord.Color.gold()
+            color=await get_guild_color(ctx.guild_id if ctx.guild_id else None)
         )
         
         embed.add_field(
