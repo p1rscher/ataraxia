@@ -22,8 +22,6 @@ env/
 *.log
 logs/
 
-# Dashboard
-dashboard/
 
 # OS
 .DS_Store
