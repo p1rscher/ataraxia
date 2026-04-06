@@ -311,6 +311,18 @@ async def init_db():
             )
         """)
 
+        # Warnings Table
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS warnings (
+                id SERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                moderator_id BIGINT NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+
     logger.info("Database initialized successfully!")
 
 async def close_db():
@@ -1535,3 +1547,32 @@ async def reset_guild_colors(guild_id: int):
     """Resets all embed colors for a guild to defaults."""
     async with _pool.acquire() as conn:
         await conn.execute("DELETE FROM embed_colors WHERE guild_id = $1", guild_id)
+
+
+# ==================== MODERATION ====================
+
+async def add_warning(guild_id: int, user_id: int, moderator_id: int, reason: str) -> int:
+    """Adds a warning and returns the warning ID."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO warnings (guild_id, user_id, moderator_id, reason) VALUES ($1, $2, $3, $4) RETURNING id",
+            guild_id, user_id, moderator_id, reason
+        )
+        return row['id']
+
+async def get_warnings(guild_id: int, user_id: int) -> list:
+    """Returns all warnings for a user in a guild."""
+    async with _pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT id, moderator_id, reason, created_at FROM warnings WHERE guild_id = $1 AND user_id = $2 ORDER BY created_at DESC",
+            guild_id, user_id
+        )
+
+async def delete_warning(guild_id: int, warning_id: int) -> bool:
+    """Deletes a warning by ID. Returns True if a row was deleted."""
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM warnings WHERE id = $1 AND guild_id = $2",
+            warning_id, guild_id
+        )
+        return result == "DELETE 1"
