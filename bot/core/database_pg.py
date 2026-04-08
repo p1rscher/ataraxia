@@ -75,6 +75,68 @@ async def init_db():
             )
         """)
 
+        # Reaction Role Panels
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS reaction_role_messages (
+                message_id BIGINT PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                image_url TEXT,
+                role_removal BOOLEAN DEFAULT TRUE,
+                multiple_slots BOOLEAN DEFAULT TRUE,
+                include_overview BOOLEAN DEFAULT FALSE,
+                component_type TEXT DEFAULT 'Buttons',
+                show_counters BOOLEAN DEFAULT FALSE,
+                required_role_id BIGINT,
+                created_by BIGINT,
+                created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC')
+            )
+        """)
+
+        # Hot-patch schema in case the tables were created before this module update
+        try:
+            await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN image_url TEXT")
+            await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN role_removal BOOLEAN DEFAULT TRUE")
+            await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN multiple_slots BOOLEAN DEFAULT TRUE")
+            await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN include_overview BOOLEAN DEFAULT FALSE")
+            await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN component_type TEXT DEFAULT 'Buttons'")
+            await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN show_counters BOOLEAN DEFAULT FALSE")
+            await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN required_role_id BIGINT")
+        except asyncpg.exceptions.DuplicateColumnError:
+            pass
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS reaction_role_entries (
+                id SERIAL PRIMARY KEY,
+                message_id BIGINT NOT NULL,
+                emoji TEXT NOT NULL,
+                label TEXT,
+                description TEXT,
+                role_id BIGINT NOT NULL,
+                UNIQUE(message_id, emoji),
+                UNIQUE(message_id, role_id)
+            )
+        """)
+
+        try:
+            await conn.execute("ALTER TABLE reaction_role_entries ADD COLUMN label TEXT")
+            await conn.execute("ALTER TABLE reaction_role_entries ADD COLUMN description TEXT")
+        except asyncpg.exceptions.DuplicateColumnError:
+            pass
+
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reaction_role_messages_guild
+            ON reaction_role_messages(guild_id)
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reaction_role_entries_message
+            ON reaction_role_entries(message_id)
+        """)
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS welcome_message (
                 guild_id BIGINT PRIMARY KEY,
@@ -323,6 +385,143 @@ async def init_db():
             )
         """)
 
+        # ==================== ECONOMY TABLES ====================
+
+        # Wallets - cash on hand + bank balance
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS wallets (
+                user_id BIGINT NOT NULL,
+                guild_id BIGINT NOT NULL,
+                cash BIGINT DEFAULT 0,
+                bank BIGINT DEFAULT 0,
+                PRIMARY KEY (user_id, guild_id)
+            )
+        """)
+
+        await conn.execute("""
+            ALTER TABLE wallets
+            ADD COLUMN IF NOT EXISTS last_interest_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC')
+        """)
+
+        # Economy settings per guild
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS economy_settings (
+                guild_id BIGINT PRIMARY KEY,
+                currency_name TEXT DEFAULT 'Coins',
+                currency_symbol TEXT DEFAULT '🪙',
+                message_coins_min INTEGER DEFAULT 1,
+                message_coins_max INTEGER DEFAULT 5,
+                voice_coins_per_hour INTEGER DEFAULT 50,
+                daily_base INTEGER DEFAULT 100,
+                weekly_base INTEGER DEFAULT 500,
+                work_min INTEGER DEFAULT 100,
+                work_max INTEGER DEFAULT 500,
+                work_cooldown INTEGER DEFAULT 14400,
+                crime_min INTEGER DEFAULT 200,
+                crime_max INTEGER DEFAULT 800,
+                crime_fine_min INTEGER DEFAULT 100,
+                crime_fine_max INTEGER DEFAULT 600,
+                crime_success_rate INTEGER DEFAULT 50,
+                crime_cooldown INTEGER DEFAULT 28800,
+                beg_min INTEGER DEFAULT 5,
+                beg_max INTEGER DEFAULT 75,
+                beg_nothing_rate INTEGER DEFAULT 30,
+                beg_cooldown INTEGER DEFAULT 3600,
+                rob_success_rate INTEGER DEFAULT 40,
+                rob_fine_percent INTEGER DEFAULT 25,
+                rob_cooldown INTEGER DEFAULT 43200,
+                gift_tax_percent INTEGER DEFAULT 0,
+                bank_interest_rate REAL DEFAULT 0.01,
+                bank_max BIGINT DEFAULT 0
+            )
+        """)
+
+        # Daily/Weekly streak tracking
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS economy_streaks (
+                user_id BIGINT NOT NULL,
+                guild_id BIGINT NOT NULL,
+                daily_streak INTEGER DEFAULT 0,
+                last_daily TIMESTAMP,
+                last_weekly TIMESTAMP,
+                PRIMARY KEY (user_id, guild_id)
+            )
+        """)
+
+        # Economy cooldowns (work, crime, beg, rob)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS economy_cooldowns (
+                user_id BIGINT NOT NULL,
+                guild_id BIGINT NOT NULL,
+                command_name TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                PRIMARY KEY (user_id, guild_id, command_name)
+            )
+        """)
+
+        # Transaction log
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS economy_transactions (
+                id SERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                amount BIGINT NOT NULL,
+                type TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC')
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_economy_transactions_user
+            ON economy_transactions(user_id, guild_id)
+        """)
+
+        # Shop items configurable per guild
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS shop_items (
+                id SERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                item_key TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                price BIGINT NOT NULL,
+                item_type TEXT NOT NULL,
+                role_id BIGINT,
+                boost_multiplier REAL DEFAULT 1.0,
+                boost_hours INTEGER DEFAULT 0,
+                stock INTEGER DEFAULT 0,
+                UNIQUE(guild_id, item_key)
+            )
+        """)
+
+        # User inventory for consumables and passive items
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_inventory (
+                user_id BIGINT NOT NULL,
+                guild_id BIGINT NOT NULL,
+                item_key TEXT NOT NULL,
+                quantity INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, guild_id, item_key)
+            )
+        """)
+
+        # Temporary XP boosts purchased from the shop
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS active_xp_boosts (
+                user_id BIGINT NOT NULL,
+                guild_id BIGINT NOT NULL,
+                multiplier REAL NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                PRIMARY KEY (user_id, guild_id)
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_shop_items_guild
+            ON shop_items(guild_id)
+        """)
+
     logger.info("Database initialized successfully!")
 
 async def close_db():
@@ -534,6 +733,122 @@ async def remove_verification(guild_id: int):
         await conn.execute(
             "DELETE FROM verification WHERE guild_id = $1",
             guild_id
+        )
+
+
+# ==================== REACTION ROLES ====================
+
+async def create_reaction_role_message(
+    guild_id: int,
+    channel_id: int,
+    message_id: int,
+    title: str,
+    description: str,
+    created_by: Optional[int] = None,
+):
+    """Create or replace a reaction role panel record."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO reaction_role_messages (message_id, guild_id, channel_id, title, description, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (message_id) DO UPDATE SET
+                guild_id = $2,
+                channel_id = $3,
+                title = $4,
+                description = $5,
+                created_by = $6
+            """,
+            message_id, guild_id, channel_id, title, description, created_by
+        )
+
+async def update_reaction_role_message(message_id: int, **kwargs):
+    """Update reaction role panel properties dynamically."""
+    if not kwargs:
+        return
+        
+    set_clauses = []
+    values = []
+    
+    for param_id, (key, value) in enumerate(kwargs.items(), start=1):
+        set_clauses.append(f"{key} = ${param_id}")
+        values.append(value)
+        
+    values.append(message_id)
+    
+    query = f"UPDATE reaction_role_messages SET {', '.join(set_clauses)} WHERE message_id = ${len(values)}"
+    
+    async with _pool.acquire() as conn:
+        await conn.execute(query, *values)
+
+async def get_reaction_role_message(message_id: int):
+    """Get one reaction role panel by message ID."""
+    async with _pool.acquire() as conn:
+        return await conn.fetchrow(
+            "SELECT * FROM reaction_role_messages WHERE message_id = $1",
+            message_id
+        )
+
+async def get_reaction_role_messages(guild_id: int):
+    """List all reaction role panels in a guild."""
+    async with _pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT * FROM reaction_role_messages WHERE guild_id = $1 ORDER BY created_at DESC",
+            guild_id
+        )
+
+async def delete_reaction_role_message(message_id: int):
+    """Delete a reaction role panel and all of its mappings."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM reaction_role_entries WHERE message_id = $1",
+            message_id
+        )
+        result = await conn.execute(
+            "DELETE FROM reaction_role_messages WHERE message_id = $1",
+            message_id
+        )
+        return result == "DELETE 1"
+
+async def add_reaction_role_entry(message_id: int, emoji: str, role_id: int, label: str = None, description: str = None):
+    """Create or update one emoji -> role mapping on a panel."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM reaction_role_entries WHERE message_id = $1 AND role_id = $2 AND emoji <> $3",
+            message_id, role_id, emoji
+        )
+        await conn.execute(
+            """
+            INSERT INTO reaction_role_entries (message_id, emoji, role_id, label, description)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = $3, label = $4, description = $5
+            """,
+            message_id, emoji, role_id, label, description
+        )
+
+async def remove_reaction_role_entry(message_id: int, emoji: str):
+    """Delete one emoji mapping from a panel."""
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM reaction_role_entries WHERE message_id = $1 AND emoji = $2",
+            message_id, emoji
+        )
+        return result == "DELETE 1"
+
+async def get_reaction_role_entries(message_id: int):
+    """List all emoji mappings for a panel."""
+    async with _pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT emoji, role_id, label, description FROM reaction_role_entries WHERE message_id = $1 ORDER BY id ASC",
+            message_id
+        )
+
+async def get_reaction_role_entry(message_id: int, emoji: str):
+    """Get a single emoji mapping for a panel."""
+    async with _pool.acquire() as conn:
+        return await conn.fetchrow(
+            "SELECT emoji, role_id, label, description FROM reaction_role_entries WHERE message_id = $1 AND emoji = $2",
+            message_id, emoji
         )
 
 
@@ -1011,6 +1326,16 @@ async def set_level(user_id: int, guild_id: int, level: int):
             "UPDATE user_levels SET level = $1 WHERE user_id = $2 AND guild_id = $3",
             level, user_id, guild_id
         )
+
+async def set_xp_and_level(user_id: int, guild_id: int, xp: int, level: int):
+    """Set both XP and level directly"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO user_levels (user_id, guild_id, xp, level) VALUES ($1, $2, $3, $4)
+               ON CONFLICT (user_id, guild_id) DO UPDATE SET xp = $3, level = $4""",
+            user_id, guild_id, xp, level
+        )
+
     
 async def get_multiplier(user_id: int, guild_id: int):
     """Get the XP multiplier of a user"""
@@ -1220,8 +1545,11 @@ async def calculate_total_multiplier(member, channel_id: int) -> float:
     if role_mults:
         for rm in role_mults:
             total *= rm  # Multiplicative stacking for roles
-    
-    
+
+    # Apply temporary purchased XP boost, if active
+    temp_boost = await get_active_xp_boost_multiplier(member.id, guild_id)
+    total *= temp_boost
+
     return total
 
 # ==================== VOICE XP TRACKING ====================
@@ -1576,3 +1904,507 @@ async def delete_warning(guild_id: int, warning_id: int) -> bool:
             warning_id, guild_id
         )
         return result == "DELETE 1"
+
+
+# ==================== ECONOMY ====================
+
+async def get_economy_settings(guild_id: int) -> dict:
+    """Get economy settings for a guild, with defaults"""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM economy_settings WHERE guild_id = $1",
+            guild_id
+        )
+        if row:
+            return dict(row)
+        return {
+            'guild_id': guild_id,
+            'currency_name': 'Coins',
+            'currency_symbol': '🪙',
+            'message_coins_min': 1,
+            'message_coins_max': 5,
+            'voice_coins_per_hour': 50,
+            'daily_base': 100,
+            'weekly_base': 500,
+            'work_min': 100,
+            'work_max': 500,
+            'work_cooldown': 14400,
+            'crime_min': 200,
+            'crime_max': 800,
+            'crime_fine_min': 100,
+            'crime_fine_max': 600,
+            'crime_success_rate': 50,
+            'crime_cooldown': 28800,
+            'beg_min': 5,
+            'beg_max': 75,
+            'beg_nothing_rate': 30,
+            'beg_cooldown': 3600,
+            'rob_success_rate': 40,
+            'rob_fine_percent': 25,
+            'rob_cooldown': 43200,
+            'gift_tax_percent': 0,
+            'bank_interest_rate': 0.01,
+            'bank_max': 0,
+        }
+
+async def set_economy_setting(guild_id: int, setting: str, value):
+    """Set a specific economy setting for a guild"""
+    valid_settings = {
+        'currency_name', 'currency_symbol', 'message_coins_min', 'message_coins_max',
+        'voice_coins_per_hour', 'daily_base', 'weekly_base',
+        'work_min', 'work_max', 'work_cooldown',
+        'crime_min', 'crime_max', 'crime_fine_min', 'crime_fine_max',
+        'crime_success_rate', 'crime_cooldown',
+        'beg_min', 'beg_max', 'beg_nothing_rate', 'beg_cooldown',
+        'rob_success_rate', 'rob_fine_percent', 'rob_cooldown',
+        'gift_tax_percent', 'bank_interest_rate', 'bank_max',
+    }
+    if setting not in valid_settings:
+        raise ValueError(f"Invalid economy setting: {setting}")
+    async with _pool.acquire() as conn:
+        await conn.execute(f"""
+            INSERT INTO economy_settings (guild_id, {setting})
+            VALUES ($1, $2)
+            ON CONFLICT (guild_id) DO UPDATE SET {setting} = $2
+        """, guild_id, value)
+
+async def _apply_bank_interest_with_conn(conn, user_id: int, guild_id: int):
+    """Apply daily bank interest lazily when a wallet is accessed."""
+    row = await conn.fetchrow(
+        "SELECT bank, last_interest_at FROM wallets WHERE user_id = $1 AND guild_id = $2",
+        user_id, guild_id
+    )
+    if not row:
+        return
+
+    if row['last_interest_at'] is None:
+        await conn.execute(
+            "UPDATE wallets SET last_interest_at = $1 WHERE user_id = $2 AND guild_id = $3",
+            get_iso_now(), user_id, guild_id
+        )
+        return
+
+    bank_balance = row['bank'] or 0
+    last_interest_at = row['last_interest_at']
+    if last_interest_at.tzinfo is None:
+        last_interest_at = last_interest_at.replace(tzinfo=timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    full_days = int((now - last_interest_at).total_seconds() // 86400)
+    if full_days <= 0:
+        return
+
+    settings_row = await conn.fetchrow(
+        "SELECT bank_interest_rate FROM economy_settings WHERE guild_id = $1",
+        guild_id
+    )
+    interest_rate = settings_row['bank_interest_rate'] if settings_row else 0.01
+    new_last_interest = (last_interest_at + timedelta(days=full_days)).replace(tzinfo=None)
+
+    if bank_balance <= 0 or interest_rate <= 0:
+        await conn.execute(
+            "UPDATE wallets SET last_interest_at = $1 WHERE user_id = $2 AND guild_id = $3",
+            new_last_interest, user_id, guild_id
+        )
+        return
+
+    interest_amount = int(bank_balance * ((1 + interest_rate) ** full_days - 1))
+    await conn.execute(
+        "UPDATE wallets SET bank = bank + $1, last_interest_at = $2 WHERE user_id = $3 AND guild_id = $4",
+        interest_amount, new_last_interest, user_id, guild_id
+    )
+
+    if interest_amount > 0:
+        await conn.execute(
+            "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
+            guild_id, user_id, interest_amount, 'interest', f'Bank interest ({full_days}d)'
+        )
+
+async def get_wallet(user_id: int, guild_id: int) -> dict:
+    """Get a user's wallet (cash + bank). Creates one if not exists."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO wallets (user_id, guild_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            user_id, guild_id
+        )
+        await _apply_bank_interest_with_conn(conn, user_id, guild_id)
+        row = await conn.fetchrow(
+            "SELECT cash, bank FROM wallets WHERE user_id = $1 AND guild_id = $2",
+            user_id, guild_id
+        )
+        if row:
+            return {'cash': row['cash'], 'bank': row['bank']}
+        return {'cash': 0, 'bank': 0}
+
+async def ensure_wallet(user_id: int, guild_id: int):
+    """Create wallet row if it doesn't exist"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO wallets (user_id, guild_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            user_id, guild_id
+        )
+
+async def add_coins(user_id: int, guild_id: int, amount: int, description: Optional[str] = None):
+    """Add coins to a user's cash balance"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO wallets (user_id, guild_id, cash) VALUES ($1, $2, $3)
+               ON CONFLICT (user_id, guild_id) DO UPDATE SET cash = wallets.cash + $3""",
+            user_id, guild_id, amount
+        )
+        # Log transaction
+        if description:
+            await conn.execute(
+                "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
+                guild_id, user_id, amount, 'earn', description
+            )
+
+async def remove_coins(user_id: int, guild_id: int, amount: int, description: Optional[str] = None) -> bool:
+    """Remove coins from cash. Returns False if insufficient funds."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT cash FROM wallets WHERE user_id = $1 AND guild_id = $2",
+            user_id, guild_id
+        )
+        if not row or row['cash'] < amount:
+            return False
+        await conn.execute(
+            "UPDATE wallets SET cash = cash - $1 WHERE user_id = $2 AND guild_id = $3",
+            amount, user_id, guild_id
+        )
+        if description:
+            await conn.execute(
+                "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
+                guild_id, user_id, -amount, 'spend', description
+            )
+        return True
+
+async def deposit_coins(user_id: int, guild_id: int, amount: int) -> bool:
+    """Move coins from cash to bank. Returns False if insufficient cash."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO wallets (user_id, guild_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            user_id, guild_id
+        )
+        await _apply_bank_interest_with_conn(conn, user_id, guild_id)
+        row = await conn.fetchrow(
+            "SELECT cash FROM wallets WHERE user_id = $1 AND guild_id = $2",
+            user_id, guild_id
+        )
+        if not row or row['cash'] < amount:
+            return False
+
+        settings_row = await conn.fetchrow(
+            "SELECT bank_max FROM economy_settings WHERE guild_id = $1",
+            guild_id
+        )
+        bank_max = settings_row['bank_max'] if settings_row else 0
+        if bank_max > 0:
+            wallet_row = await conn.fetchrow(
+                "SELECT bank FROM wallets WHERE user_id = $1 AND guild_id = $2",
+                user_id, guild_id
+            )
+            current_bank = wallet_row['bank'] if wallet_row else 0
+            if current_bank + amount > bank_max:
+                return False
+
+        await conn.execute(
+            "UPDATE wallets SET cash = cash - $1, bank = bank + $1 WHERE user_id = $2 AND guild_id = $3",
+            amount, user_id, guild_id
+        )
+        return True
+
+async def withdraw_coins(user_id: int, guild_id: int, amount: int) -> bool:
+    """Move coins from bank to cash. Returns False if insufficient bank balance."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO wallets (user_id, guild_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            user_id, guild_id
+        )
+        await _apply_bank_interest_with_conn(conn, user_id, guild_id)
+        row = await conn.fetchrow(
+            "SELECT bank FROM wallets WHERE user_id = $1 AND guild_id = $2",
+            user_id, guild_id
+        )
+        if not row or row['bank'] < amount:
+            return False
+        await conn.execute(
+            "UPDATE wallets SET bank = bank - $1, cash = cash + $1 WHERE user_id = $2 AND guild_id = $3",
+            amount, user_id, guild_id
+        )
+        return True
+
+async def transfer_coins(from_user: int, to_user: int, guild_id: int, amount: int, tax_percent: int = 0) -> bool:
+    """Transfer coins between users. Returns False if insufficient funds."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT cash FROM wallets WHERE user_id = $1 AND guild_id = $2",
+            from_user, guild_id
+        )
+        if not row or row['cash'] < amount:
+            return False
+        
+        tax = int(amount * tax_percent / 100)
+        received = amount - tax
+        
+        await conn.execute(
+            "UPDATE wallets SET cash = cash - $1 WHERE user_id = $2 AND guild_id = $3",
+            amount, from_user, guild_id
+        )
+        await conn.execute(
+            """INSERT INTO wallets (user_id, guild_id, cash) VALUES ($1, $2, $3)
+               ON CONFLICT (user_id, guild_id) DO UPDATE SET cash = wallets.cash + $3""",
+            to_user, guild_id, received
+        )
+        # Log both sides
+        await conn.execute(
+            "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
+            guild_id, from_user, -amount, 'gift', f'Gift to {to_user}'
+        )
+        await conn.execute(
+            "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
+            guild_id, to_user, received, 'gift', f'Gift from {from_user}'
+        )
+        return True
+
+async def get_economy_leaderboard(guild_id: int, limit: int = 10):
+    """Get richest users (cash + bank combined)"""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT user_id, cash, bank, (cash + bank) as total FROM wallets WHERE guild_id = $1 ORDER BY total DESC LIMIT $2",
+            guild_id, limit
+        )
+        return rows if rows else []
+
+# --- Streaks ---
+
+async def get_streak(user_id: int, guild_id: int) -> dict:
+    """Get daily/weekly streak info"""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT daily_streak, last_daily, last_weekly FROM economy_streaks WHERE user_id = $1 AND guild_id = $2",
+            user_id, guild_id
+        )
+        if row:
+            return {'daily_streak': row['daily_streak'], 'last_daily': row['last_daily'], 'last_weekly': row['last_weekly']}
+        return {'daily_streak': 0, 'last_daily': None, 'last_weekly': None}
+
+async def update_daily_streak(user_id: int, guild_id: int, new_streak: int):
+    """Update daily streak and timestamp"""
+    now = get_iso_now()
+    async with _pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO economy_streaks (user_id, guild_id, daily_streak, last_daily)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, guild_id) DO UPDATE SET daily_streak = $3, last_daily = $4
+        """, user_id, guild_id, new_streak, now)
+
+async def update_weekly_timestamp(user_id: int, guild_id: int):
+    """Update weekly claim timestamp"""
+    now = get_iso_now()
+    async with _pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO economy_streaks (user_id, guild_id, last_weekly)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, guild_id) DO UPDATE SET last_weekly = $3
+        """, user_id, guild_id, now)
+
+# --- Cooldowns ---
+
+async def get_economy_cooldown(user_id: int, guild_id: int, command_name: str) -> Optional[datetime]:
+    """Get when a cooldown expires. Returns None if no active cooldown."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT expires_at FROM economy_cooldowns WHERE user_id = $1 AND guild_id = $2 AND command_name = $3",
+            user_id, guild_id, command_name
+        )
+        if row and row['expires_at']:
+            expires = row['expires_at']
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if expires > datetime.now(timezone.utc):
+                return expires
+        return None
+
+async def set_economy_cooldown(user_id: int, guild_id: int, command_name: str, seconds: int):
+    """Set a cooldown for a command"""
+    expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=seconds)
+    async with _pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO economy_cooldowns (user_id, guild_id, command_name, expires_at)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, guild_id, command_name) DO UPDATE SET expires_at = $4
+        """, user_id, guild_id, command_name, expires)
+
+async def upsert_shop_item(
+    guild_id: int,
+    item_key: str,
+    name: str,
+    description: str,
+    price: int,
+    item_type: str,
+    role_id: Optional[int] = None,
+    boost_multiplier: float = 1.0,
+    boost_hours: int = 0,
+    stock: int = 0,
+):
+    """Create or update a shop item."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO shop_items (
+                guild_id, item_key, name, description, price, item_type,
+                role_id, boost_multiplier, boost_hours, stock
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (guild_id, item_key) DO UPDATE SET
+                name = $3,
+                description = $4,
+                price = $5,
+                item_type = $6,
+                role_id = $7,
+                boost_multiplier = $8,
+                boost_hours = $9,
+                stock = $10
+            """,
+            guild_id, item_key, name, description, price, item_type,
+            role_id, boost_multiplier, boost_hours, stock
+        )
+
+async def remove_shop_item(guild_id: int, item_key: str) -> bool:
+    """Remove a shop item by key."""
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM shop_items WHERE guild_id = $1 AND item_key = $2",
+            guild_id, item_key
+        )
+        return result == "DELETE 1"
+
+async def get_shop_item(guild_id: int, item_key: str):
+    """Get a single custom shop item."""
+    async with _pool.acquire() as conn:
+        return await conn.fetchrow(
+            "SELECT * FROM shop_items WHERE guild_id = $1 AND item_key = $2",
+            guild_id, item_key
+        )
+
+async def get_shop_items(guild_id: int):
+    """Get all custom shop items for a guild."""
+    async with _pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT * FROM shop_items WHERE guild_id = $1 ORDER BY price ASC, name ASC",
+            guild_id
+        )
+
+async def add_inventory_item(user_id: int, guild_id: int, item_key: str, quantity: int = 1):
+    """Add an item to a user's inventory."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO user_inventory (user_id, guild_id, item_key, quantity)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, guild_id, item_key) DO UPDATE
+            SET quantity = user_inventory.quantity + $4
+            """,
+            user_id, guild_id, item_key, quantity
+        )
+
+async def remove_inventory_item(user_id: int, guild_id: int, item_key: str, quantity: int = 1) -> bool:
+    """Remove an item from inventory. Returns False if not enough quantity exists."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT quantity FROM user_inventory WHERE user_id = $1 AND guild_id = $2 AND item_key = $3",
+            user_id, guild_id, item_key
+        )
+        if not row or row['quantity'] < quantity:
+            return False
+
+        new_quantity = row['quantity'] - quantity
+        if new_quantity <= 0:
+            await conn.execute(
+                "DELETE FROM user_inventory WHERE user_id = $1 AND guild_id = $2 AND item_key = $3",
+                user_id, guild_id, item_key
+            )
+        else:
+            await conn.execute(
+                "UPDATE user_inventory SET quantity = $1 WHERE user_id = $2 AND guild_id = $3 AND item_key = $4",
+                new_quantity, user_id, guild_id, item_key
+            )
+        return True
+
+async def get_inventory(user_id: int, guild_id: int):
+    """Get all inventory items for a user."""
+    async with _pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT item_key, quantity FROM user_inventory WHERE user_id = $1 AND guild_id = $2 ORDER BY item_key ASC",
+            user_id, guild_id
+        )
+
+async def get_inventory_quantity(user_id: int, guild_id: int, item_key: str) -> int:
+    """Get the quantity of one inventory item."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT quantity FROM user_inventory WHERE user_id = $1 AND guild_id = $2 AND item_key = $3",
+            user_id, guild_id, item_key
+        )
+        return row['quantity'] if row else 0
+
+async def activate_xp_boost(user_id: int, guild_id: int, multiplier: float, duration_hours: int):
+    """Activate or extend a temporary XP boost."""
+    now = datetime.now(timezone.utc)
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT multiplier, expires_at FROM active_xp_boosts WHERE user_id = $1 AND guild_id = $2",
+            user_id, guild_id
+        )
+
+        if row and row['expires_at']:
+            expires_at = row['expires_at']
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at > now:
+                new_expires = (expires_at + timedelta(hours=duration_hours)).replace(tzinfo=None)
+                await conn.execute(
+                    "UPDATE active_xp_boosts SET multiplier = $1, expires_at = $2 WHERE user_id = $3 AND guild_id = $4",
+                    max(multiplier, row['multiplier']), new_expires, user_id, guild_id
+                )
+                return
+
+        expires = (now + timedelta(hours=duration_hours)).replace(tzinfo=None)
+        await conn.execute(
+            """
+            INSERT INTO active_xp_boosts (user_id, guild_id, multiplier, expires_at)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, guild_id) DO UPDATE
+            SET multiplier = $3, expires_at = $4
+            """,
+            user_id, guild_id, multiplier, expires
+        )
+
+async def get_active_xp_boost(user_id: int, guild_id: int) -> Optional[dict]:
+    """Get the currently active XP boost for a user, if any."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT multiplier, expires_at FROM active_xp_boosts WHERE user_id = $1 AND guild_id = $2",
+            user_id, guild_id
+        )
+        if not row:
+            return None
+
+        expires_at = row['expires_at']
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        if expires_at <= datetime.now(timezone.utc):
+            await conn.execute(
+                "DELETE FROM active_xp_boosts WHERE user_id = $1 AND guild_id = $2",
+                user_id, guild_id
+            )
+            return None
+
+        return {'multiplier': row['multiplier'], 'expires_at': expires_at}
+
+async def get_active_xp_boost_multiplier(user_id: int, guild_id: int) -> float:
+    """Return the multiplier of an active temporary XP boost, or 1.0."""
+    boost = await get_active_xp_boost(user_id, guild_id)
+    return boost['multiplier'] if boost else 1.0

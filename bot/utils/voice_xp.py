@@ -88,7 +88,16 @@ async def grant_voice_xp(bot):
                 
                 logger.debug(f"Granted {xp} voice XP to user {user_id} in guild {guild_id}")
                 
-                # Check for level up
+                # Passive coin reward for voice (proportional to interval)
+                try:
+                    eco_settings = await db.get_economy_settings(guild_id)
+                    # voice_coins_per_hour scaled to interval
+                    coins = int(eco_settings['voice_coins_per_hour'] * voice_interval / 3600)
+                    if coins > 0:
+                        await db.add_coins(user_id, guild_id, coins)
+                except Exception as e:
+                    logger.error(f"Failed to grant voice coins: {e}")
+
                 # If level log channel is configured, it will be used automatically
                 # Otherwise, try to find a fallback channel for voice XP level-ups
                 fallback_channel = guild.system_channel

@@ -50,6 +50,7 @@ from events import on_raw_message_edit
 from events import on_message_delete
 from events import on_raw_message_delete
 from events import on_raw_reaction_add
+from events import on_raw_reaction_remove
 from events import on_voice_state_update
 from events import on_guild_join
 from events import on_interaction
@@ -71,6 +72,7 @@ bot.event(on_raw_message_edit.on_raw_message_edit)
 bot.event(on_message_delete.on_message_delete)
 bot.event(on_raw_message_delete.on_raw_message_delete)
 bot.event(on_raw_reaction_add.on_raw_reaction_add)
+bot.event(on_raw_reaction_remove.on_raw_reaction_remove)
 bot.event(on_voice_state_update.on_voice_state_update)
 bot.event(on_guild_join.on_guild_join)
 bot.event(on_interaction.on_interaction)
@@ -84,6 +86,7 @@ on_message.bot = bot
 on_raw_message_edit.bot = bot
 on_raw_message_delete.bot = bot
 on_raw_reaction_add.bot = bot
+on_raw_reaction_remove.bot = bot
 on_guild_join.bot = bot
 on_raw_reaction_add.bot = bot
 close.bot = bot

@@ -315,6 +315,119 @@ class XPSettingsCog(commands.Cog):
         embed.set_footer(text="Multipliers stack multiplicatively")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    async def _has_premium_access(self, user: discord.abc.User) -> bool:
+        if await self.bot.is_owner(user):
+            return True
+        tier = await db.get_user_premium_tier(user.id)
+        return tier in ("premium", "premium_plus")
+
+    async def _recalculate_user(self, user: discord.Member, guild: discord.Guild, current_xp: int) -> int:
+        """Helper to find the correct level for given XP, set it, and handle roles"""
+        level = 0
+        from utils.xp_calculator import calculate_xp_needed, handle_level_roles
+        
+        while True:
+            # XP needed for level N is basically the XP needed to enter level N
+            # Wait, calculate_xp_needed(M) computes total XP needed for level M.
+            # E.g., if needed to enter level 1 is 100, then you stay level 0 until 100 XP
+            needed = await calculate_xp_needed(level + 1)
+            if current_xp >= needed:
+                level += 1
+            else:
+                break
+                
+        await db.set_xp_and_level(user.id, guild.id, current_xp, level)
+        await handle_level_roles(guild, user, level)
+        return level
+
+    admin_group = app_commands.Group(name="xpadm", description="[PREMIUM] Admin commands to manage user XP")
+
+    @admin_group.command(name="add", description="[PREMIUM] Add XP to a user")
+    @app_commands.describe(user="The user to add XP to", amount="XP amount")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def add_xp_cmd(self, interaction: discord.Interaction, user: discord.Member, amount: int):
+        if not await self._has_premium_access(interaction.user):
+            return await interaction.response.send_message("❌ This feature requires **Premium**. Use `/premium info` for upgrade options.", ephemeral=True)
+        if amount <= 0:
+            return await interaction.response.send_message("❌ Amount must be positive.", ephemeral=True)
+            
+        await interaction.response.defer(ephemeral=True)
+        level_data = await db.get_level(user.id, interaction.guild.id)
+        current_xp = level_data['xp'] if level_data else 0
+        
+        new_xp = current_xp + amount
+        new_level = await self._recalculate_user(user, interaction.guild, new_xp)
+        await interaction.followup.send(f"✅ Added {amount} XP to {user.mention}. They are now Level **{new_level}**.")
+
+    @admin_group.command(name="remove", description="[PREMIUM] Remove XP from a user")
+    @app_commands.describe(user="The user to remove XP from", amount="XP amount")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def remove_xp_cmd(self, interaction: discord.Interaction, user: discord.Member, amount: int):
+        if not await self._has_premium_access(interaction.user):
+            return await interaction.response.send_message("❌ This feature requires **Premium**. Use `/premium info` for upgrade options.", ephemeral=True)
+        if amount <= 0:
+            return await interaction.response.send_message("❌ Amount must be positive.", ephemeral=True)
+            
+        await interaction.response.defer(ephemeral=True)
+        level_data = await db.get_level(user.id, interaction.guild.id)
+        current_xp = level_data['xp'] if level_data else 0
+        
+        new_xp = max(0, current_xp - amount)
+        new_level = await self._recalculate_user(user, interaction.guild, new_xp)
+        await interaction.followup.send(f"✅ Removed {amount} XP from {user.mention}. They are now Level **{new_level}**.")
+
+    @admin_group.command(name="setlevel", description="[PREMIUM] Set a user to a specific level (up or down)")
+    @app_commands.describe(user="The target user", level="Level to set the user to")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def set_level_cmd(self, interaction: discord.Interaction, user: discord.Member, level: int):
+        if not await self._has_premium_access(interaction.user):
+            return await interaction.response.send_message("❌ This feature requires **Premium**. Use `/premium info` for upgrade options.", ephemeral=True)
+        if level < 0:
+            return await interaction.response.send_message("❌ Level cannot be negative.", ephemeral=True)
+            
+        await interaction.response.defer(ephemeral=True)
+        from utils.xp_calculator import calculate_xp_needed, handle_level_roles
+        
+        # Determine base XP required for that level to avoid broken leveling later
+        new_xp = await calculate_xp_needed(level) if level > 0 else 0
+        
+        await db.set_xp_and_level(user.id, interaction.guild.id, new_xp, level)
+        await handle_level_roles(interaction.guild, user, level)
+        
+        await interaction.followup.send(f"✅ Set {user.mention} to Level **{level}**.")
+
+    @admin_group.command(name="transfer", description="[PREMIUM] Transfer XP from one user to another")
+    @app_commands.describe(from_user="User to take XP from", to_user="User to give XP to", amount="XP amount to transfer")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def transfer_xp_cmd(self, interaction: discord.Interaction, from_user: discord.Member, to_user: discord.Member, amount: int):
+        if not await self._has_premium_access(interaction.user):
+            return await interaction.response.send_message("❌ This feature requires **Premium**. Use `/premium info` for upgrade options.", ephemeral=True)
+        if amount <= 0:
+            return await interaction.response.send_message("❌ Amount must be positive.", ephemeral=True)
+            
+        await interaction.response.defer(ephemeral=True)
+        
+        from_level_data = await db.get_level(from_user.id, interaction.guild.id)
+        from_xp = from_level_data['xp'] if from_level_data else 0
+        
+        if from_xp < amount:
+            return await interaction.followup.send(f"❌ {from_user.mention} only has **{from_xp}** XP! Cannot transfer {amount} XP.")
+            
+        to_level_data = await db.get_level(to_user.id, interaction.guild.id)
+        to_xp = to_level_data['xp'] if to_level_data else 0
+        
+        new_from_xp = max(0, from_xp - amount)
+        new_to_xp = to_xp + amount
+        
+        await self._recalculate_user(from_user, interaction.guild, new_from_xp)
+        await self._recalculate_user(to_user, interaction.guild, new_to_xp)
+        
+        await interaction.followup.send(f"✅ Transferred **{amount} XP** from {from_user.mention} to {to_user.mention}.")
+
 
 async def setup(bot):
     await bot.add_cog(XPSettingsCog(bot))

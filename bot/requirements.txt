@@ -4,3 +4,4 @@ asyncpg==0.31.0
 python-dotenv==1.2.2
 groq==1.1.2
 sympy==1.14.0
+emoji==2.15.0

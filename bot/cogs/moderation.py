@@ -44,6 +44,8 @@ class ModerationCog(commands.Cog):
         if user.top_role >= ctx.user.top_role and ctx.user.id != ctx.guild.owner_id:
             await ctx.response.send_message("❌ You cannot warn a member with an equal or higher role.", ephemeral=True)
             return
+        
+        
 
         warning_id = await db.add_warning(ctx.guild_id, user.id, ctx.user.id, reason)
         warnings = await db.get_warnings(ctx.guild_id, user.id)

@@ -43,6 +43,15 @@ async def on_message(message: discord.Message):
         # Check for level up (can level up multiple times)
         await check_level_up(message.author.id, message.guild.id, bot, message.channel)
 
+        # Passive coin reward for messages (uses same cooldown as XP)
+        try:
+            eco_settings = await db.get_economy_settings(message.guild.id)
+            coin_amount = random.randint(eco_settings['message_coins_min'], eco_settings['message_coins_max'])
+            if coin_amount > 0:
+                await db.add_coins(message.author.id, message.guild.id, coin_amount)
+        except Exception as e:
+            logger.error(f"Failed to grant message coins: {e}")
+
    # Save message to database
     await db.save_message(
         message_id=message.id,

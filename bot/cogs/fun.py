@@ -16,7 +16,7 @@ class FunCog(commands.Cog):
         responses = ["Yes!", "No!", "Maybe...", "Ask again later"]
         await ctx.response.send_message(f"🎱 {random.choice(responses)}")
 
-    @app_commands.command(name="coinflip")
+    @app_commands.command(name="flipcoin")
     async def coinflip(self, ctx: discord.Interaction):
         result = random.choice(["Heads", "Tails"])
         await ctx.response.send_message(f"🪙 {result}!")
@@ -30,11 +30,10 @@ class FunCog(commands.Cog):
             await ctx.response.send_message("❌ You must provide between 2 and 10 options.", ephemeral=True)
             return
 
-        poll_message = await ctx.response.send_message(f"📊 Poll: {question}\n" + "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(option_list)]))
+        await ctx.response.send_message(f"📊 Poll: {question}\n" + "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(option_list)]))
+        poll_message = await ctx.original_response()
         for i in range(len(option_list)):
             await poll_message.add_reaction(discord.PartialEmoji.from_str(f"{i+1}️⃣"))
-
-        await ctx.response.send_message("✅ Poll created!", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(FunCog(bot))
