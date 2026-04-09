@@ -30,7 +30,7 @@ async def on_ready():
     from utils import backfill_guild_messages, process_missed_verifications, sync_voice_sessions_on_startup
     
     logger.info("on_ready: Starting backfill...")
-    tasks = [backfill_guild_messages(g, backfill_limit=256) for g in bot.guilds]
+    tasks = [backfill_guild_messages(g) for g in bot.guilds]
     await asyncio.gather(*tasks)
     logger.info("Backfill complete")
 

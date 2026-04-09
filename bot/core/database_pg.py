@@ -763,6 +763,100 @@ async def save_message(message_id: int, guild_id: int, channel_id: int,
                 message_id, guild_id, channel_id, author_id, content, created_at, edited_at
             )
 
+async def bulk_save_messages(messages_data: list[dict]):
+    """
+    Saves multiple messages efficiently.
+    messages_data is a list of dicts:
+    {
+        'message_id': int,
+        'guild_id': int,
+        'channel_id': int,
+        'author_id': int,
+        'content': str,
+        'created_at': datetime,
+        'edited_at': datetime,
+    }
+    """
+    if not messages_data:
+        return
+        
+    message_ids = [m['message_id'] for m in messages_data]
+    
+    # We want to use the last instance of a message in the batch in case it appears multiple times
+    msg_dict = {m['message_id']: m for m in messages_data}
+    
+    async with _pool.acquire() as conn:
+        # Fetch existing messages
+        existing_rows = await conn.fetch(
+            "SELECT message_id, content, current_version, created_at, edited_at FROM messages WHERE message_id = ANY($1::bigint[])",
+            message_ids
+        )
+        
+        existing = {r['message_id']: r for r in existing_rows}
+        
+        inserts = []
+        updates = []
+        versions = []
+        
+        now = get_iso_now()
+        
+        for msg_id, msg in msg_dict.items():
+            content = msg['content']
+            created_at = ensure_datetime(msg.get('created_at')) or now
+            edited_at = ensure_datetime(msg.get('edited_at'))
+            
+            if msg_id in existing:
+                row = existing[msg_id]
+                old_content = row['content']
+                current_version = row['current_version']
+                msg_created_at = row['created_at']
+                msg_edited_at = row['edited_at']
+                
+                # Check for content change
+                if old_content != content:
+                    # Determine version timestamp
+                    if current_version == 1:
+                        version_timestamp = edited_at or msg_edited_at or msg_created_at
+                    else:
+                        version_timestamp = edited_at or msg_edited_at or now
+                        
+                    versions.append((
+                        msg_id, old_content, current_version, version_timestamp
+                    ))
+                    
+                    new_edited_at = edited_at or now
+                    updates.append((
+                        content, current_version + 1, new_edited_at, msg_id
+                    ))
+            else:
+                inserts.append((
+                    msg_id, msg['guild_id'], msg['channel_id'], msg['author_id'],
+                    content, created_at, edited_at
+                ))
+        
+        # Execute operations in a transaction
+        if inserts or versions or updates:
+            async with conn.transaction():
+                if inserts:
+                    await conn.executemany(
+                        "INSERT INTO messages (message_id, guild_id, channel_id, author_id, content, created_at, edited_at) "
+                        "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                        inserts
+                    )
+                
+                if versions:
+                    await conn.executemany(
+                        "INSERT INTO message_versions (message_id, content, version_number, edited_at) "
+                        "VALUES ($1, $2, $3, $4)",
+                        versions
+                    )
+                
+                if updates:
+                    await conn.executemany(
+                        "UPDATE messages SET content = $1, current_version = $2, edited_at = $3 WHERE message_id = $4",
+                        updates
+                    )
+
 async def get_message(message_id: int):
     async with _pool.acquire() as conn:
         return await conn.fetchrow(
