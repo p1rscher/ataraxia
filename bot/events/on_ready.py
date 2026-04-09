@@ -18,13 +18,16 @@ async def on_ready():
     for cmd in bot.tree.get_commands():
         logger.debug(f"- {cmd.name}  ({type(cmd)})  desc={cmd.description}")
 
-    logger.info("on_ready: Syncing commands...")
-    for guild in bot.guilds:
+    async def background_sync_commands(bot_ref):
+        logger.info("on_ready: Syncing commands in background...")
         try:
-            synced = await bot.tree.sync()
-            logger.info(f"Synced {len(synced)} command(s) to guild {guild.name} (ID: {guild.id})")
+            synced = await bot_ref.tree.sync()
+            logger.info(f"Synced {len(synced)} global command(s).")
         except Exception as e:
-            logger.error(f"Failed to sync for {guild.name}: {e}")
+            logger.error(f"Failed to sync global commands: {e}")
+
+    # Schedule command syncing as a background task
+    asyncio.create_task(background_sync_commands(bot))
 
     # Import utils for backfill and verification
     from utils import backfill_guild_messages, process_missed_verifications, sync_voice_sessions_on_startup
