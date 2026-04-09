@@ -63,7 +63,10 @@ async def check_level_up(user_id: int, guild_id: int, bot: discord.Client, fallb
         # Handle level roles - remove old ones and add new one
         await handle_level_roles(guild, member, current_level)
         
-        if level_log_channel_id:
+        if level_log_channel_id == 0:
+            # Explicitly disabled
+            notification_channel = None
+        elif level_log_channel_id:
             # Use configured level log channel
             notification_channel = guild.get_channel(level_log_channel_id)
         else:

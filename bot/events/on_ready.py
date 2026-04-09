@@ -40,5 +40,12 @@ async def on_ready():
     logger.info("on_ready: Syncing voice sessions...")
     await sync_voice_sessions_on_startup(bot)
 
-    logger.info("on_ready: Startup completed - bot is now fully ready!")
+    from core import database_pg as db
+    logger.info("on_ready: Backfilling discord_users database...")
+    try:
+        await db.bulk_upsert_users(bot.users)
+        logger.info(f"on_ready: Backfilled {len(bot.users)} global users tightly.")
+    except Exception as e:
+        logger.error(f"on_ready: Failed to backfill users: {e}")
 
+    logger.info("on_ready: Startup completed - bot is now fully ready!")

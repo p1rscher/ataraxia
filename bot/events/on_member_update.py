@@ -9,7 +9,11 @@ logger = logging.getLogger(__name__)
 bot: Optional[discord.Client] = None
 
 async def on_member_update(before: discord.Member, after: discord.Member):
-    """Auto-assign parent roles when child roles are added"""
+    """Auto-assign parent roles when child roles are added and track global user changes."""
+    
+    # Track username or global_name changes globally
+    if before.name != after.name or before.global_name != after.global_name:
+        await db.upsert_user(after, force=True)
     
     # Check if roles changed
     if before.roles == after.roles:

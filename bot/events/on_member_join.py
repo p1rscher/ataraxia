@@ -12,6 +12,9 @@ bot: Optional[discord.Client] = None
 async def on_member_join(member: discord.Member):
     """Handle new member joining - assign autoroles and send welcome message"""
     
+    # Globally track the user
+    await db.upsert_user(member, force=True)
+    
     # Get autorole settings for this guild
     settings = await db.get_autorole_settings(member.guild.id)
     

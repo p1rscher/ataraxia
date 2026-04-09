@@ -135,7 +135,7 @@ class CommandPaginator(discord.ui.View):
         self._update_buttons()
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
-class InfoCog(commands.Cog):
+class HelpCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -146,10 +146,7 @@ class InfoCog(commands.Cog):
         
         # 1. Exact Subcommand Overrides
         overrides = {
-            "voicelog set": "⚙️ Server Setup & Logs",
             "channel cleanup": "🛡️ Moderation",
-            "voicelog clear": "📈 XP & Logging",
-            "log clear": "📈 XP & Logging",
             "autorole clear": "🔐 Server Roles & Security"
         }
         
@@ -158,16 +155,16 @@ class InfoCog(commands.Cog):
 
         # 2. General Logical Capabilities Mapping
         cats = {
-            "🌸 Ataraxia": ["about", "hello", "info", "say"],
+            "🌸 Ataraxia": ["about", "hello", "info", "say", "profile"],
             "💎 Premium": ["premium"],
             "🤖 AI": ["ai"],
             "🧮 Math": ["math"],
             "🛡️ Moderation": ["ban", "kick", "mute", "timeout", "warn", "warnings", "delwarn", "clear", "purge", "unban", "unmute", "lock", "unlock", "slowmode", "nuke"],
-            "📈 XP & Logging": ["xp", "xpadm", "xpmultiplier", "levelrole", "levellog", "voicexp-requirements", "level", "rank", "leaderboard"],
-            "🎙️ Voice & Channels": ["channel", "tempvoice", "voicelog", "voice", "vctemp"],
+            "📈 XP & Logging": ["xp", "xpadm", "xpmultiplier", "levelrole", "voicexp-requirements", "level", "rank", "leaderboard"],
+            "🎙️ Voice & Channels": ["channel", "tempvoice", "voice", "vctemp"],
             "💰 Economy & Shop": ["shopadmin", "shop", "economy", "pay", "balance", "daily", "work", "crime", "rob", "beg", "deposit", "withdraw"],
             "🎮 Fun & Games": ["counting", "game", "tictactoe", "8ball", "coinflip", "meme"],
-            "🔐 Server Roles & Security": ["autorole", "reactionroles", "verification", "welcome", "parentrole", "verify", "roles"],
+            "🔐 Server Roles & Security": ["autorole", "reactionroles", "verification", "welcome", "parentrole", "verify", "roles", "customrole"],
             "⚙️ Server Setup & Logs": ["serverstats", "log", "settings", "config", "setup", "logs", "modlog"],
             "🛠️ Utility & Misc": ["bump", "ping", "avatar", "userinfo", "serverinfo", "stats", "botinfo"]
         }
@@ -188,7 +185,7 @@ class InfoCog(commands.Cog):
             
         return "📌 General"
 
-    @app_commands.command(name="info", description="List all available commands and premium features")
+    @app_commands.command(name="help", description="List all available commands and premium features")
     async def commands_list(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer(ephemeral=True)
@@ -246,4 +243,4 @@ class InfoCog(commands.Cog):
         return clean_desc, is_p, is_p_plus
 
 async def setup(bot):
-    await bot.add_cog(InfoCog(bot))
+    await bot.add_cog(HelpCog(bot))

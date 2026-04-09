@@ -27,6 +27,9 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
+    # Silently track the user globally with internal cache protection
+    await db.upsert_user(message.author)
+
     # Check XP cooldown before granting XP
     if await db.can_gain_message_xp(message.author.id, message.guild.id):
         # Get customizable XP range for this guild

@@ -33,9 +33,15 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS guild_settings (
                 guild_id BIGINT PRIMARY KEY,
                 message_log_channel_id BIGINT,
+                say_log_channel_id BIGINT,
                 level_log_channel_id BIGINT,
                 voice_log_channel_id BIGINT
             )
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS say_log_channel_id BIGINT
         """)
         
         
@@ -522,6 +528,36 @@ async def init_db():
             ON shop_items(guild_id)
         """)
 
+        # Custom Role Settings
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS custom_role_settings (
+                guild_id BIGINT PRIMARY KEY,
+                enabled BOOLEAN DEFAULT FALSE,
+                anchor_role_id BIGINT,
+                allowed_roles BIGINT[] DEFAULT ARRAY[]::BIGINT[]
+            )
+        """)
+
+        # User Custom Roles
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_custom_roles (
+                user_id BIGINT NOT NULL,
+                guild_id BIGINT NOT NULL,
+                role_id BIGINT NOT NULL,
+                PRIMARY KEY (user_id, guild_id)
+            )
+        """)
+
+        # Global Discord Users Tracking
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS discord_users (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT NOT NULL,
+                global_name TEXT,
+                last_seen TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC')
+            )
+        """)
+
     logger.info("Database initialized successfully!")
 
 async def close_db():
@@ -578,7 +614,7 @@ async def set_log_channel(guild_id: int, channel_id: int):
 async def clear_log_channel(guild_id: int):
     async with _pool.acquire() as conn:
         await conn.execute(
-            "DELETE FROM guild_settings WHERE guild_id = $1",
+            "UPDATE guild_settings SET message_log_channel_id = NULL WHERE guild_id = $1",
             guild_id
         )
 
@@ -589,6 +625,29 @@ async def get_log_channel_id(guild_id: int) -> Optional[int]:
             guild_id
         )
         return row['message_log_channel_id'] if row else None
+
+async def set_say_log_channel(guild_id: int, channel_id: int):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO guild_settings (guild_id, say_log_channel_id) VALUES ($1, $2) "
+            "ON CONFLICT (guild_id) DO UPDATE SET say_log_channel_id = $2",
+            guild_id, channel_id
+        )
+
+async def clear_say_log_channel(guild_id: int):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE guild_settings SET say_log_channel_id = NULL WHERE guild_id = $1",
+            guild_id
+        )
+
+async def get_say_log_channel_id(guild_id: int) -> Optional[int]:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT say_log_channel_id FROM guild_settings WHERE guild_id = $1",
+            guild_id
+        )
+        return row['say_log_channel_id'] if row else None
 
 async def set_level_log_channel(guild_id: int, channel_id: int):
     """Set the level-up log channel for a guild"""
@@ -604,6 +663,15 @@ async def remove_level_log_channel(guild_id: int):
     async with _pool.acquire() as conn:
         await conn.execute(
             "UPDATE guild_settings SET level_log_channel_id = NULL WHERE guild_id = $1",
+            guild_id
+        )
+
+async def disable_level_log_channel(guild_id: int):
+    """Disable the level-up log channel entirely for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO guild_settings (guild_id, level_log_channel_id) VALUES ($1, 0) "
+            "ON CONFLICT (guild_id) DO UPDATE SET level_log_channel_id = 0",
             guild_id
         )
 
@@ -2408,3 +2476,125 @@ async def get_active_xp_boost_multiplier(user_id: int, guild_id: int) -> float:
     """Return the multiplier of an active temporary XP boost, or 1.0."""
     boost = await get_active_xp_boost(user_id, guild_id)
     return boost['multiplier'] if boost else 1.0
+
+# ==================== CUSTOM ROLES ====================
+
+async def get_custom_role_settings(guild_id: int):
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT enabled, anchor_role_id, allowed_roles FROM custom_role_settings WHERE guild_id = $1",
+            guild_id
+        )
+        if row:
+            return {'enabled': row['enabled'], 'anchor_role_id': row['anchor_role_id'], 'allowed_roles': row['allowed_roles']}
+        return {'enabled': False, 'anchor_role_id': None, 'allowed_roles': []}
+
+async def toggle_custom_role(guild_id: int, enabled: bool):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO custom_role_settings (guild_id, enabled) VALUES ($1, $2)
+            ON CONFLICT (guild_id) DO UPDATE SET enabled = $2
+            """,
+            guild_id, enabled
+        )
+
+async def set_custom_role_setup(guild_id: int, anchor_role_id: Optional[int], allowed_roles: list[int]):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO custom_role_settings (guild_id, anchor_role_id, allowed_roles) VALUES ($1, $2, $3)
+            ON CONFLICT (guild_id) DO UPDATE SET anchor_role_id = $2, allowed_roles = $3
+            """,
+            guild_id, anchor_role_id, allowed_roles
+        )
+
+async def get_user_custom_role(user_id: int, guild_id: int) -> Optional[int]:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT role_id FROM user_custom_roles WHERE user_id = $1 AND guild_id = $2",
+            user_id, guild_id
+        )
+        return row['role_id'] if row else None
+
+async def set_user_custom_role(user_id: int, guild_id: int, role_id: int):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO user_custom_roles (user_id, guild_id, role_id) VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, guild_id) DO UPDATE SET role_id = $3
+            """,
+            user_id, guild_id, role_id
+        )
+
+# ==================== DISCORD USER TRACKING ====================
+
+import time
+import discord
+_global_user_cache = {}
+
+async def upsert_user(user: discord.User | discord.Member, force: bool = False):
+    """
+    Updates the global discord_users table with the user's current identity. 
+    Maintains a 15-minute cache to prevent DB spam unless force=True.
+    """
+    if user.bot:
+        return
+        
+    now = time.time()
+    
+    if not force:
+        cached = _global_user_cache.get(user.id)
+        if cached:
+            last_time, cached_uname, cached_gname = cached
+            # If nothing changed natively and 15 mins haven't passed, skip
+            if (now - last_time < 900) and user.name == cached_uname and user.global_name == cached_gname:
+                return
+
+    # Update cache
+    _global_user_cache[user.id] = (now, user.name, user.global_name)
+    
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO discord_users (user_id, username, global_name, last_seen)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id) DO UPDATE SET 
+                username = $2, 
+                global_name = $3, 
+                last_seen = $4
+            """,
+            user.id, user.name, user.global_name, get_iso_now()
+        )
+
+async def bulk_upsert_users(users: list):
+    """Bulk inserts a huge list of users (e.g. at startup) efficiently."""
+    if not users:
+        return
+        
+    # Deduplicate by ID
+    unique_users = {u.id: u for u in users if not u.bot}.values()
+    if not unique_users:
+        return
+
+    now = time.time()
+    for u in unique_users:
+        _global_user_cache[u.id] = (now, u.name, u.global_name)
+        
+    records = [
+        (u.id, u.name, u.global_name, get_iso_now()) 
+        for u in unique_users
+    ]
+    
+    async with _pool.acquire() as conn:
+        await conn.executemany(
+            """
+            INSERT INTO discord_users (user_id, username, global_name, last_seen)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id) DO UPDATE SET 
+                username = EXCLUDED.username, 
+                global_name = EXCLUDED.global_name, 
+                last_seen = EXCLUDED.last_seen
+            """,
+            records
+        )
