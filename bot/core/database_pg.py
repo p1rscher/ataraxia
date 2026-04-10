@@ -35,13 +35,31 @@ async def init_db():
                 message_log_channel_id BIGINT,
                 say_log_channel_id BIGINT,
                 level_log_channel_id BIGINT,
-                voice_log_channel_id BIGINT
+                voice_log_channel_id BIGINT,
+                mod_log_channel_id BIGINT,
+                traffic_log_channel_id BIGINT,
+                custom_prefix TEXT
             )
         """)
 
         await conn.execute("""
             ALTER TABLE guild_settings
             ADD COLUMN IF NOT EXISTS say_log_channel_id BIGINT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS mod_log_channel_id BIGINT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS traffic_log_channel_id BIGINT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS custom_prefix TEXT
         """)
         
         
@@ -709,6 +727,90 @@ async def get_voice_log_channel_id(guild_id: int) -> Optional[int]:
             guild_id
         )
         return row['voice_log_channel_id'] if row else None
+
+# ==================== MODERATION LOG CHANNEL ====================
+
+async def set_mod_log_channel(guild_id: int, channel_id: int):
+    """Set the moderation log channel for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO guild_settings (guild_id, mod_log_channel_id) VALUES ($1, $2) "
+            "ON CONFLICT (guild_id) DO UPDATE SET mod_log_channel_id = $2",
+            guild_id, channel_id
+        )
+
+async def clear_mod_log_channel(guild_id: int):
+    """Clear the moderation log channel for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE guild_settings SET mod_log_channel_id = NULL WHERE guild_id = $1",
+            guild_id
+        )
+
+async def get_mod_log_channel_id(guild_id: int) -> Optional[int]:
+    """Get the moderation log channel for a guild"""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT mod_log_channel_id FROM guild_settings WHERE guild_id = $1",
+            guild_id
+        )
+        return row['mod_log_channel_id'] if row else None
+
+# ==================== TRAFFIC LOG CHANNEL ====================
+
+async def set_traffic_log_channel(guild_id: int, channel_id: int):
+    """Set the user traffic log channel for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO guild_settings (guild_id, traffic_log_channel_id) VALUES ($1, $2) "
+            "ON CONFLICT (guild_id) DO UPDATE SET traffic_log_channel_id = $2",
+            guild_id, channel_id
+        )
+
+async def clear_traffic_log_channel(guild_id: int):
+    """Clear the user traffic log channel for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE guild_settings SET traffic_log_channel_id = NULL WHERE guild_id = $1",
+            guild_id
+        )
+
+async def get_traffic_log_channel_id(guild_id: int) -> Optional[int]:
+    """Get the user traffic log channel for a guild"""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT traffic_log_channel_id FROM guild_settings WHERE guild_id = $1",
+            guild_id
+        )
+        return row['traffic_log_channel_id'] if row else None
+
+# ==================== CUSTOM PREFIX ====================
+
+async def get_guild_prefix(guild_id: int) -> Optional[str]:
+    """Get the custom prefix for a guild. Returns None if not set (uses default)."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT custom_prefix FROM guild_settings WHERE guild_id = $1",
+            guild_id
+        )
+        return row['custom_prefix'] if row else None
+
+async def set_guild_prefix(guild_id: int, prefix: str):
+    """Set a custom prefix for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO guild_settings (guild_id, custom_prefix) VALUES ($1, $2) "
+            "ON CONFLICT (guild_id) DO UPDATE SET custom_prefix = $2",
+            guild_id, prefix
+        )
+
+async def clear_guild_prefix(guild_id: int):
+    """Clear the custom prefix for a guild (revert to default)"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE guild_settings SET custom_prefix = NULL WHERE guild_id = $1",
+            guild_id
+        )
 
 # ==================== MESSAGES ====================
 

@@ -11,6 +11,8 @@ LOG_TYPE_CHOICES = [
     app_commands.Choice(name="Say Logs", value="say"),
     app_commands.Choice(name="Voice Logs", value="voice"),
     app_commands.Choice(name="Level Logs", value="level"),
+    app_commands.Choice(name="Moderation Logs", value="moderation"),
+    app_commands.Choice(name="User Traffic Logs", value="traffic"),
 ]
 
 
@@ -64,6 +66,12 @@ class LogConfigCog(commands.Cog):
         elif type.value == "voice":
             await db.set_voice_log_channel(ctx.guild_id, channel.id)
             description = f"Voice activity logs will now be sent to {channel.mention}."
+        elif type.value == "moderation":
+            await db.set_mod_log_channel(ctx.guild_id, channel.id)
+            description = f"Moderation action logs will now be sent to {channel.mention}."
+        elif type.value == "traffic":
+            await db.set_traffic_log_channel(ctx.guild_id, channel.id)
+            description = f"User traffic logs (joins/leaves) will now be sent to {channel.mention}."
         else:
             await db.set_level_log_channel(ctx.guild_id, channel.id)
             description = f"Level-up logs will now be sent to {channel.mention}."
@@ -94,6 +102,12 @@ class LogConfigCog(commands.Cog):
         elif type.value == "voice":
             await db.remove_voice_log_channel(ctx.guild_id)
             description = "Voice activity logs have been disabled."
+        elif type.value == "moderation":
+            await db.clear_mod_log_channel(ctx.guild_id)
+            description = "Moderation action logs have been disabled."
+        elif type.value == "traffic":
+            await db.clear_traffic_log_channel(ctx.guild_id)
+            description = "User traffic logs have been disabled."
         else:
             await db.remove_level_log_channel(ctx.guild_id)
             description = "Dedicated level log channel removed. Level-ups will fall back to the XP source channel."
@@ -124,6 +138,12 @@ class LogConfigCog(commands.Cog):
         elif type.value == "voice":
             await db.remove_voice_log_channel(ctx.guild_id)
             description = "Voice activity logs have been disabled."
+        elif type.value == "moderation":
+            await db.clear_mod_log_channel(ctx.guild_id)
+            description = "Moderation action logs have been disabled."
+        elif type.value == "traffic":
+            await db.clear_traffic_log_channel(ctx.guild_id)
+            description = "User traffic logs have been disabled."
         else:
             await db.disable_level_log_channel(ctx.guild_id)
             description = "Level-up logs are now disabled everywhere."
@@ -145,6 +165,8 @@ class LogConfigCog(commands.Cog):
         say_log_channel_id = await db.get_say_log_channel_id(ctx.guild_id)
         voice_log_channel_id = await db.get_voice_log_channel_id(ctx.guild_id)
         level_log_channel_id = await db.get_level_log_channel_id(ctx.guild_id)
+        mod_log_channel_id = await db.get_mod_log_channel_id(ctx.guild_id)
+        traffic_log_channel_id = await db.get_traffic_log_channel_id(ctx.guild_id)
 
         embed = discord.Embed(
             title="📋 Log Status",
@@ -177,6 +199,22 @@ class LogConfigCog(commands.Cog):
                 "Falls back to the XP source channel"
                 if level_log_channel_id is None
                 else await self._channel_display(ctx.guild, level_log_channel_id)
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Moderation Logs",
+            value=(
+                f"{await self._channel_display(ctx.guild, mod_log_channel_id)}\n"
+                "Covers warn, kick, ban, and timeout actions."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="User Traffic Logs",
+            value=(
+                f"{await self._channel_display(ctx.guild, traffic_log_channel_id)}\n"
+                "Covers member joins and leaves."
             ),
             inline=False,
         )

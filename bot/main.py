@@ -37,12 +37,39 @@ intents.members = True
 intents.message_content = True
 intents.presences = True
 
-bot = commands.Bot(command_prefix="Atx.", intents=intents)
+DEFAULT_PREFIX = "Atx."
+
+# In-memory prefix cache: guild_id -> prefix string
+_prefix_cache: dict[int, str] = {}
+
+async def get_prefix(bot_instance: commands.Bot, message: discord.Message) -> list[str]:
+    """Dynamic prefix resolver. Returns the guild's custom prefix or the default."""
+    if not message.guild:
+        return commands.when_mentioned_or(DEFAULT_PREFIX)(bot_instance, message)
+
+    guild_id = message.guild.id
+
+    # Check cache first
+    if guild_id in _prefix_cache:
+        prefix = _prefix_cache[guild_id]
+    else:
+        # Query DB and cache the result
+        try:
+            prefix = await db.get_guild_prefix(guild_id)
+            _prefix_cache[guild_id] = prefix or DEFAULT_PREFIX
+            prefix = _prefix_cache[guild_id]
+        except Exception:
+            prefix = DEFAULT_PREFIX
+
+    return commands.when_mentioned_or(prefix)(bot_instance, message)
+
+bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
 
 # Event imports
 #-------------------------------------------------------------------
 from events import on_member_join
+from events import on_member_remove
 from events import on_member_update
 from events import on_message
 from events import on_message_edit
@@ -65,6 +92,7 @@ from utils import close
 # Register event handlers
 bot.event(on_ready.on_ready)
 bot.event(on_member_join.on_member_join)
+bot.event(on_member_remove.on_member_remove)
 bot.event(on_member_update.on_member_update)
 bot.event(on_message.on_message)
 bot.event(on_message_edit.on_message_edit)
@@ -81,6 +109,7 @@ bot.event(on_app_command_completion.on_app_command_completion)
 # Provide bot reference to event handlers and commands that need it
 on_ready.bot = bot
 on_member_join.bot = bot
+on_member_remove.bot = bot
 on_member_update.bot = bot
 on_message.bot = bot
 on_raw_message_edit.bot = bot
@@ -151,19 +180,21 @@ async def main():
     
     logger.info("Starting bot...")
     
-    # Start bot and background tasks concurrently
-    async with asyncio.TaskGroup() as tg:
-        tg.create_task(bot.start(TOKEN))
-        tg.create_task(update_stats_json(bot))
-        tg.create_task(grant_voice_xp(bot))
-    
-    # Cleanup on exit
-    if hasattr(db, 'close_db'):
-        await db.close_db()
-        logger.info("Database connection closed.")
+    try:
+        await bot.start(TOKEN)
+    except Exception as e:
+        logger.error(f"Fatal error during bot execution: {e}")
+    finally:
+        # Cleanup on exit
+        if hasattr(db, 'close_db'):
+            await db.close_db()
+            logger.info("Database connection closed.")
 
 
 if __name__ == "__main__":
     # Acquire process lock before starting
     with ProcessLock():
-        asyncio.run(main())
+        try:
+            asyncio.run(main())
+        except KeyboardInterrupt:
+            pass
