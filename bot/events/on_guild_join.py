@@ -18,7 +18,7 @@ async def on_guild_join(guild: discord.Guild):
     
     # Backfill messages from all channels
     try:
-        await backfill_guild_messages(guild)
+        await backfill_guild_messages(guild, backfill_hours=24*7*4)
         logger.info(f"Backfill completed for {guild.name}")
     except Exception as e:
         logger.error(f"Backfill failed for {guild.name}: {e}")
