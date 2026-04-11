@@ -2316,125 +2316,118 @@ async def ensure_wallet(user_id: int, guild_id: int):
 async def add_coins(user_id: int, guild_id: int, amount: int, description: Optional[str] = None):
     """Add coins to a user's cash balance"""
     async with _pool.acquire() as conn:
-        await conn.execute(
-            """INSERT INTO wallets (user_id, guild_id, cash) VALUES ($1, $2, $3)
-               ON CONFLICT (user_id, guild_id) DO UPDATE SET cash = wallets.cash + $3""",
-            user_id, guild_id, amount
-        )
-        # Log transaction
-        if description:
+        async with conn.transaction():
             await conn.execute(
-                "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
-                guild_id, user_id, amount, 'earn', description
+                """INSERT INTO wallets (user_id, guild_id, cash) VALUES ($1, $2, $3)
+                   ON CONFLICT (user_id, guild_id) DO UPDATE SET cash = wallets.cash + $3""",
+                user_id, guild_id, amount
             )
+            # Log transaction
+            if description:
+                await conn.execute(
+                    "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
+                    guild_id, user_id, amount, 'earn', description
+                )
 
 async def remove_coins(user_id: int, guild_id: int, amount: int, description: Optional[str] = None) -> bool:
     """Remove coins from cash. Returns False if insufficient funds."""
     async with _pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT cash FROM wallets WHERE user_id = $1 AND guild_id = $2",
-            user_id, guild_id
-        )
-        if not row or row['cash'] < amount:
-            return False
-        await conn.execute(
-            "UPDATE wallets SET cash = cash - $1 WHERE user_id = $2 AND guild_id = $3",
-            amount, user_id, guild_id
-        )
-        if description:
-            await conn.execute(
-                "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
-                guild_id, user_id, -amount, 'spend', description
+        async with conn.transaction():
+            result = await conn.execute(
+                "UPDATE wallets SET cash = cash - $1 WHERE user_id = $2 AND guild_id = $3 AND cash >= $1",
+                amount, user_id, guild_id
             )
-        return True
+            if result == "UPDATE 0":
+                return False
+                
+            if description:
+                await conn.execute(
+                    "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
+                    guild_id, user_id, -amount, 'spend', description
+                )
+            return True
 
 async def deposit_coins(user_id: int, guild_id: int, amount: int) -> bool:
     """Move coins from cash to bank. Returns False if insufficient cash."""
     async with _pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO wallets (user_id, guild_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            user_id, guild_id
-        )
-        await _apply_bank_interest_with_conn(conn, user_id, guild_id)
-        row = await conn.fetchrow(
-            "SELECT cash FROM wallets WHERE user_id = $1 AND guild_id = $2",
-            user_id, guild_id
-        )
-        if not row or row['cash'] < amount:
-            return False
-
-        settings_row = await conn.fetchrow(
-            "SELECT bank_max FROM economy_settings WHERE guild_id = $1",
-            guild_id
-        )
-        bank_max = settings_row['bank_max'] if settings_row else 0
-        if bank_max > 0:
-            wallet_row = await conn.fetchrow(
-                "SELECT bank FROM wallets WHERE user_id = $1 AND guild_id = $2",
+        async with conn.transaction():
+            await conn.execute(
+                "INSERT INTO wallets (user_id, guild_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
                 user_id, guild_id
             )
-            current_bank = wallet_row['bank'] if wallet_row else 0
-            if current_bank + amount > bank_max:
+            await _apply_bank_interest_with_conn(conn, user_id, guild_id)
+            
+            row = await conn.fetchrow(
+                """
+                SELECT w.cash, w.bank, COALESCE(s.bank_max, 0) as bank_max 
+                FROM wallets w
+                LEFT JOIN economy_settings s ON w.guild_id = s.guild_id
+                WHERE w.user_id = $1 AND w.guild_id = $2
+                """,
+                user_id, guild_id
+            )
+            
+            if not row or row['cash'] < amount:
                 return False
 
-        await conn.execute(
-            "UPDATE wallets SET cash = cash - $1, bank = bank + $1 WHERE user_id = $2 AND guild_id = $3",
-            amount, user_id, guild_id
-        )
-        return True
+            if row['bank_max'] > 0 and (row['bank'] + amount) > row['bank_max']:
+                return False
+
+            await conn.execute(
+                "UPDATE wallets SET cash = cash - $1, bank = bank + $1 WHERE user_id = $2 AND guild_id = $3",
+                amount, user_id, guild_id
+            )
+            return True
 
 async def withdraw_coins(user_id: int, guild_id: int, amount: int) -> bool:
     """Move coins from bank to cash. Returns False if insufficient bank balance."""
     async with _pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO wallets (user_id, guild_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            user_id, guild_id
-        )
-        await _apply_bank_interest_with_conn(conn, user_id, guild_id)
-        row = await conn.fetchrow(
-            "SELECT bank FROM wallets WHERE user_id = $1 AND guild_id = $2",
-            user_id, guild_id
-        )
-        if not row or row['bank'] < amount:
-            return False
-        await conn.execute(
-            "UPDATE wallets SET bank = bank - $1, cash = cash + $1 WHERE user_id = $2 AND guild_id = $3",
-            amount, user_id, guild_id
-        )
-        return True
+        async with conn.transaction():
+            await conn.execute(
+                "INSERT INTO wallets (user_id, guild_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                user_id, guild_id
+            )
+            await _apply_bank_interest_with_conn(conn, user_id, guild_id)
+            
+            result = await conn.execute(
+                "UPDATE wallets SET bank = bank - $1, cash = cash + $1 WHERE user_id = $2 AND guild_id = $3 AND bank >= $1",
+                amount, user_id, guild_id
+            )
+            return result != "UPDATE 0"
 
 async def transfer_coins(from_user: int, to_user: int, guild_id: int, amount: int, tax_percent: int = 0) -> bool:
     """Transfer coins between users. Returns False if insufficient funds."""
+    tax = int(amount * tax_percent / 100)
+    received = amount - tax
+
     async with _pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT cash FROM wallets WHERE user_id = $1 AND guild_id = $2",
-            from_user, guild_id
-        )
-        if not row or row['cash'] < amount:
-            return False
-        
-        tax = int(amount * tax_percent / 100)
-        received = amount - tax
-        
-        await conn.execute(
-            "UPDATE wallets SET cash = cash - $1 WHERE user_id = $2 AND guild_id = $3",
-            amount, from_user, guild_id
-        )
-        await conn.execute(
-            """INSERT INTO wallets (user_id, guild_id, cash) VALUES ($1, $2, $3)
-               ON CONFLICT (user_id, guild_id) DO UPDATE SET cash = wallets.cash + $3""",
-            to_user, guild_id, received
-        )
-        # Log both sides
-        await conn.execute(
-            "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
-            guild_id, from_user, -amount, 'gift', f'Gift to {to_user}'
-        )
-        await conn.execute(
-            "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
-            guild_id, to_user, received, 'gift', f'Gift from {from_user}'
-        )
-        return True
+        async with conn.transaction():
+            # Atomically attempt to deduct money. Eliminates SELECT race conditions.
+            result = await conn.execute(
+                "UPDATE wallets SET cash = cash - $1 WHERE user_id = $2 AND guild_id = $3 AND cash >= $1",
+                amount, from_user, guild_id
+            )
+            
+            # execute returns string like "UPDATE 1" or "UPDATE 0"
+            if result == "UPDATE 0":
+                return False
+                
+            # Add to receiving user
+            await conn.execute(
+                """INSERT INTO wallets (user_id, guild_id, cash) VALUES ($1, $2, $3)
+                   ON CONFLICT (user_id, guild_id) DO UPDATE SET cash = wallets.cash + $3""",
+                to_user, guild_id, received
+            )
+            
+            # Batch insert logs
+            await conn.executemany(
+                "INSERT INTO economy_transactions (guild_id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)",
+                [
+                    (guild_id, from_user, -amount, 'gift', f'Gift to {to_user}'),
+                    (guild_id, to_user, received, 'gift', f'Gift from {from_user}')
+                ]
+            )
+            return True
 
 async def get_economy_leaderboard(guild_id: int, limit: int = 10):
     """Get richest users (cash + bank combined)"""
