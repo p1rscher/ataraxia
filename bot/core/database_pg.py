@@ -23,8 +23,13 @@ async def init_db():
         logger.error("DATABASE_URL not found in .env!")
         return
 
+    # Connection pool limits configurable via .env 
+    # (Decrease DB_POOL_MAX if you get Max Clients reached errors from your DB host)
+    pool_min = int(os.getenv("DB_POOL_MIN", "2"))
+    pool_max = int(os.getenv("DB_POOL_MAX", "10"))
+
     # Create Connection Pool
-    _pool = await asyncpg.create_pool(db_url, min_size=5, max_size=20)
+    _pool = await asyncpg.create_pool(db_url, min_size=pool_min, max_size=pool_max)
 
     # Create Tables
     async with _pool.acquire() as conn:

@@ -68,7 +68,16 @@ async def on_ready():
         logger.info("on_ready: Started persistent background tasks (stats, voice xp, presence)")
 
     logger.info("on_ready: Starting backfill...")
-    tasks = [backfill_guild_messages(g) for g in bot.guilds]
+    
+    # Use a Semaphore to prevent backfilling hundreds of guilds at exactly the same time,
+    # which exhausts DB connections and leads to "Max Clients reached" errors from DB hosts.
+    sem = asyncio.Semaphore(5)
+    
+    async def bounded_backfill(guild):
+        async with sem:
+            await backfill_guild_messages(guild)
+            
+    tasks = [bounded_backfill(g) for g in bot.guilds]
     await asyncio.gather(*tasks)
     logger.info("Backfill complete")
 
