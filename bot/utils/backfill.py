@@ -23,8 +23,8 @@ async def backfill_guild_messages(guild, backfill_hours=BACKFILL_HOURS):
     # Voice channels (also have text chat)
     channels_to_backfill.extend(guild.voice_channels)
     
-    # Forum channels (have threads with messages)
-    channels_to_backfill.extend([ch for ch in guild.channels if hasattr(ch, 'type') and ch.type == discord.ChannelType.forum])
+    # Forum channels (Skip because they do not have a .history attribute)
+    # channels_to_backfill.extend([ch for ch in guild.channels if hasattr(ch, 'type') and ch.type == discord.ChannelType.forum])
     
     # Stage channels (can have text chat)
     channels_to_backfill.extend([ch for ch in guild.channels if hasattr(ch, 'type') and ch.type == discord.ChannelType.stage_voice])

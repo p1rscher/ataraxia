@@ -43,6 +43,7 @@ async def init_db():
                 voice_log_channel_id BIGINT,
                 mod_log_channel_id BIGINT,
                 traffic_log_channel_id BIGINT,
+                ticket_log_channel_id BIGINT,
                 custom_prefix TEXT
             )
         """)
@@ -60,6 +61,11 @@ async def init_db():
         await conn.execute("""
             ALTER TABLE guild_settings
             ADD COLUMN IF NOT EXISTS traffic_log_channel_id BIGINT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS ticket_log_channel_id BIGINT
         """)
 
         await conn.execute("""
@@ -103,6 +109,45 @@ async def init_db():
                 role_id BIGINT
             )
         """)
+
+        # Tickets
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_settings (
+                guild_id BIGINT PRIMARY KEY,
+                category_id BIGINT,
+                support_role_id BIGINT,
+                closer_role_id BIGINT,
+                max_tickets_per_user INTEGER DEFAULT 1
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_panels (
+                message_id BIGINT PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                title TEXT,
+                description TEXT
+            )
+        """)
+
+        # Migration: add closer_role_id if it doesn't exist
+        try:
+            await conn.execute("ALTER TABLE ticket_settings ADD COLUMN IF NOT EXISTS closer_role_id BIGINT")
+        except:
+            pass
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS tickets (
+                id SERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                status TEXT DEFAULT 'open',
+                created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC')
+            )
+        """)
+
 
         # Reaction Role Panels
         await conn.execute("""
@@ -170,10 +215,29 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS welcome_message (
                 guild_id BIGINT PRIMARY KEY,
                 channel_id BIGINT,
-                message TEXT
-            
+                message TEXT,
+                embed_title TEXT,
+                embed_description TEXT,
+                embed_thumbnail TEXT,
+                embed_image TEXT,
+                embed_author_name TEXT,
+                embed_author_icon TEXT,
+                embed_footer_text TEXT,
+                embed_footer_icon TEXT
             )
         """)
+        
+        try:
+            await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_title TEXT")
+            await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_description TEXT")
+            await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_thumbnail TEXT")
+            await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_image TEXT")
+            await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_author_name TEXT")
+            await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_author_icon TEXT")
+            await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_footer_text TEXT")
+            await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_footer_icon TEXT")
+        except asyncpg.exceptions.DuplicateColumnError:
+            pass
         
         # Temp Voice Settings
         await conn.execute("""
@@ -229,9 +293,26 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS autorole_settings (
                 guild_id BIGINT PRIMARY KEY,
                 enabled BOOLEAN DEFAULT FALSE,
-                role_ids BIGINT[] DEFAULT ARRAY[]::BIGINT[]
+                role_ids BIGINT[] DEFAULT ARRAY[]::BIGINT[],
+                user_role_ids BIGINT[] DEFAULT ARRAY[]::BIGINT[],
+                bot_role_ids BIGINT[] DEFAULT ARRAY[]::BIGINT[]
             )
         """)
+
+        # Migration: add user_role_ids and bot_role_ids if they don't exist
+        try:
+            await conn.execute("ALTER TABLE autorole_settings ADD COLUMN IF NOT EXISTS user_role_ids BIGINT[] DEFAULT ARRAY[]::BIGINT[]")
+            await conn.execute("ALTER TABLE autorole_settings ADD COLUMN IF NOT EXISTS bot_role_ids BIGINT[] DEFAULT ARRAY[]::BIGINT[]")
+            
+            # Migrate old role_ids to user_role_ids if user_role_ids is empty
+            await conn.execute("""
+                UPDATE autorole_settings 
+                SET user_role_ids = role_ids 
+                WHERE (user_role_ids IS NULL OR cardinality(user_role_ids) = 0) 
+                AND role_ids IS NOT NULL AND cardinality(role_ids) > 0
+            """)
+        except:
+            pass
         
         # Parent Roles Settings
         await conn.execute("""
@@ -398,9 +479,23 @@ async def init_db():
                 color_welcome INTEGER NOT NULL DEFAULT 5763719,
                 color_level_up INTEGER NOT NULL DEFAULT 16766720,
                 color_success INTEGER NOT NULL DEFAULT 5763719,
-                color_counting INTEGER NOT NULL DEFAULT 3447003
+                color_counting INTEGER NOT NULL DEFAULT 3447003,
+                color_verification INTEGER NOT NULL DEFAULT 5793266,
+                color_ticket INTEGER NOT NULL DEFAULT 3447003
             )
         """)
+
+        # Add color_verification column if it doesn't exist
+        try:
+            await conn.execute("ALTER TABLE embed_colors ADD COLUMN IF NOT EXISTS color_verification INTEGER NOT NULL DEFAULT 5793266")
+        except:
+            pass
+
+        # Add color_ticket column if it doesn't exist
+        try:
+            await conn.execute("ALTER TABLE embed_colors ADD COLUMN IF NOT EXISTS color_ticket INTEGER NOT NULL DEFAULT 3447003")
+        except:
+            pass
 
         # Warnings Table
         await conn.execute("""
@@ -789,6 +884,34 @@ async def get_traffic_log_channel_id(guild_id: int) -> Optional[int]:
         )
         return row['traffic_log_channel_id'] if row else None
 
+# ==================== TICKET LOG CHANNEL ====================
+
+async def set_ticket_log_channel(guild_id: int, channel_id: int):
+    """Set the ticket log channel for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO guild_settings (guild_id, ticket_log_channel_id) VALUES ($1, $2) "
+            "ON CONFLICT (guild_id) DO UPDATE SET ticket_log_channel_id = $2",
+            guild_id, channel_id
+        )
+
+async def clear_ticket_log_channel(guild_id: int):
+    """Clear the ticket log channel for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE guild_settings SET ticket_log_channel_id = NULL WHERE guild_id = $1",
+            guild_id
+        )
+
+async def get_ticket_log_channel_id(guild_id: int) -> Optional[int]:
+    """Get the ticket log channel for a guild"""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT ticket_log_channel_id FROM guild_settings WHERE guild_id = $1",
+            guild_id
+        )
+        return row['ticket_log_channel_id'] if row else None
+
 # ==================== CUSTOM PREFIX ====================
 
 async def get_guild_prefix(guild_id: int) -> Optional[str]:
@@ -1123,6 +1246,35 @@ async def get_reaction_role_entry(message_id: int, emoji: str):
 
 # ================= WELCOME MESSAGE ==================
 
+async def get_or_create_welcome_message(guild_id: int):
+    async with _pool.acquire() as conn:
+        record = await conn.fetchrow("SELECT * FROM welcome_message WHERE guild_id = $1", guild_id)
+        if not record:
+            await conn.execute("INSERT INTO welcome_message (guild_id) VALUES ($1)", guild_id)
+            record = await conn.fetchrow("SELECT * FROM welcome_message WHERE guild_id = $1", guild_id)
+        return dict(record) if record else None
+
+async def update_welcome_message(guild_id: int, **kwargs):
+    if not kwargs:
+        return
+    
+    set_clauses = []
+    values = []
+    for i, (key, value) in enumerate(kwargs.items(), start=1):
+        set_clauses.append(f"{key} = ${i}")
+        values.append(value)
+        
+    values.append(guild_id)
+    
+    query = f"""
+        UPDATE welcome_message 
+        SET {', '.join(set_clauses)} 
+        WHERE guild_id = ${len(values)}
+    """
+    
+    async with _pool.acquire() as conn:
+        await conn.execute(query, *values)
+
 async def set_welcome_message(guild_id: int, channel_id: int, message: str):
     async with _pool.acquire() as conn:
         await conn.execute(
@@ -1134,9 +1286,13 @@ async def set_welcome_message(guild_id: int, channel_id: int, message: str):
 async def get_welcome_message(guild_id: int):
     async with _pool.acquire() as conn:
         return await conn.fetchrow(
-            "SELECT channel_id, message FROM welcome_message WHERE guild_id = $1",
+            "SELECT * FROM welcome_message WHERE guild_id = $1",
             guild_id
         )
+
+async def remove_welcome_message(guild_id: int):
+    async with _pool.acquire() as conn:
+        await conn.execute("DELETE FROM welcome_message WHERE guild_id = $1", guild_id)
 
 
 # ==================== TEMP VOICE ====================
@@ -1342,54 +1498,89 @@ async def set_autorole_enabled(guild_id: int, enabled: bool):
             guild_id, enabled
         )
 
-async def add_autorole(guild_id: int, role_id: int):
-    """Add a role to autorole list"""
+async def add_autorole(guild_id: int, role_id: int, target_type: str = 'user'):
+    """Add a role to autorole list (target_type: 'user', 'bot', or 'both')"""
     async with _pool.acquire() as conn:
         # Get current settings or create new entry
         settings = await conn.fetchrow(
-            "SELECT role_ids FROM autorole_settings WHERE guild_id = $1",
+            "SELECT user_role_ids, bot_role_ids FROM autorole_settings WHERE guild_id = $1",
             guild_id
         )
         
         if settings:
-            role_ids = list(settings['role_ids']) if settings['role_ids'] else []
-            if role_id not in role_ids:
-                role_ids.append(role_id)
+            user_ids = list(settings['user_role_ids']) if settings['user_role_ids'] else []
+            bot_ids = list(settings['bot_role_ids']) if settings['bot_role_ids'] else []
+            
+            updated = False
+            if target_type in ['user', 'both']:
+                if role_id not in user_ids:
+                    user_ids.append(role_id)
+                    updated = True
+            
+            if target_type in ['bot', 'both']:
+                if role_id not in bot_ids:
+                    bot_ids.append(role_id)
+                    updated = True
+            
+            if updated:
                 await conn.execute(
-                    "UPDATE autorole_settings SET role_ids = $1 WHERE guild_id = $2",
-                    role_ids, guild_id
+                    "UPDATE autorole_settings SET user_role_ids = $1, bot_role_ids = $2 WHERE guild_id = $3",
+                    user_ids, bot_ids, guild_id
                 )
         else:
             # Create new entry
+            user_ids = [role_id] if target_type in ['user', 'both'] else []
+            bot_ids = [role_id] if target_type in ['bot', 'both'] else []
             await conn.execute(
-                "INSERT INTO autorole_settings (guild_id, enabled, role_ids) VALUES ($1, $2, $3)",
-                guild_id, False, [role_id]
+                "INSERT INTO autorole_settings (guild_id, enabled, user_role_ids, bot_role_ids) VALUES ($1, $2, $3, $4)",
+                guild_id, False, user_ids, bot_ids
             )
 
-async def remove_autorole(guild_id: int, role_id: int):
-    """Remove a role from autorole list"""
+async def remove_autorole(guild_id: int, role_id: int, target_type: str = 'user'):
+    """Remove a role from autorole list (target_type: 'user', 'bot', or 'both')"""
     async with _pool.acquire() as conn:
         settings = await conn.fetchrow(
-            "SELECT role_ids FROM autorole_settings WHERE guild_id = $1",
+            "SELECT user_role_ids, bot_role_ids FROM autorole_settings WHERE guild_id = $1",
             guild_id
         )
         
-        if settings and settings['role_ids']:
-            role_ids = list(settings['role_ids'])
-            if role_id in role_ids:
-                role_ids.remove(role_id)
+        if settings:
+            user_ids = list(settings['user_role_ids']) if settings['user_role_ids'] else []
+            bot_ids = list(settings['bot_role_ids']) if settings['bot_role_ids'] else []
+            
+            updated = False
+            if target_type in ['user', 'both'] and role_id in user_ids:
+                user_ids.remove(role_id)
+                updated = True
+            
+            if target_type in ['bot', 'both'] and role_id in bot_ids:
+                bot_ids.remove(role_id)
+                updated = True
+                
+            if updated:
                 await conn.execute(
-                    "UPDATE autorole_settings SET role_ids = $1 WHERE guild_id = $2",
-                    role_ids, guild_id
+                    "UPDATE autorole_settings SET user_role_ids = $1, bot_role_ids = $2 WHERE guild_id = $3",
+                    user_ids, bot_ids, guild_id
                 )
 
-async def clear_autoroles(guild_id: int):
-    """Clear all autoroles for a guild"""
+async def clear_autoroles(guild_id: int, target_type: str = 'all'):
+    """Clear autoroles for a guild (target_type: 'user', 'bot', or 'all')"""
     async with _pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE autorole_settings SET role_ids = ARRAY[]::BIGINT[] WHERE guild_id = $1",
-            guild_id
-        )
+        if target_type == 'user':
+            await conn.execute(
+                "UPDATE autorole_settings SET user_role_ids = ARRAY[]::BIGINT[] WHERE guild_id = $1",
+                guild_id
+            )
+        elif target_type == 'bot':
+            await conn.execute(
+                "UPDATE autorole_settings SET bot_role_ids = ARRAY[]::BIGINT[] WHERE guild_id = $1",
+                guild_id
+            )
+        else:
+            await conn.execute(
+                "UPDATE autorole_settings SET user_role_ids = ARRAY[]::BIGINT[], bot_role_ids = ARRAY[]::BIGINT[] WHERE guild_id = $1",
+                guild_id
+            )
 
 # ==================== PARENT ROLES FUNCTIONS ====================
 
@@ -2115,13 +2306,15 @@ DEFAULT_COLORS = {
     'color_level_up': 16766720,
     'color_success': 5763719,
     'color_counting': 3447003,
+    'color_verification': 5793266,
+    'color_ticket': 3447003,
 }
 
 async def get_guild_colors(guild_id: int) -> dict:
     """Returns all embed colors for a guild, falling back to defaults."""
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT color_primary, color_welcome, color_level_up, color_success, color_counting FROM embed_colors WHERE guild_id = $1",
+            "SELECT color_primary, color_welcome, color_level_up, color_success, color_counting, color_verification, color_ticket FROM embed_colors WHERE guild_id = $1",
             guild_id
         )
     if row:
@@ -2130,7 +2323,7 @@ async def get_guild_colors(guild_id: int) -> dict:
 
 async def set_guild_color(guild_id: int, color_type: str, color: int):
     """Sets a specific embed color for a guild."""
-    valid = {'color_primary', 'color_welcome', 'color_level_up', 'color_success', 'color_counting'}
+    valid = {'color_primary', 'color_welcome', 'color_level_up', 'color_success', 'color_counting', 'color_verification', 'color_ticket'}
     if color_type not in valid:
         raise ValueError(f"Invalid color type: {color_type}")
     async with _pool.acquire() as conn:
@@ -2792,3 +2985,70 @@ async def bulk_upsert_users(users: list):
             """,
             records
         )
+
+# ==================== TICKETS ====================
+
+async def get_ticket_settings(guild_id: int) -> dict:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM ticket_settings WHERE guild_id = $1",
+            guild_id
+        )
+        if row:
+            return dict(row)
+        return None
+
+async def set_ticket_settings(guild_id: int, category_id: int, support_role_id: int, closer_role_id: Optional[int] = None, max_tickets_per_user: int = 1):
+    async with _pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO ticket_settings (guild_id, category_id, support_role_id, closer_role_id, max_tickets_per_user)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (guild_id) DO UPDATE SET 
+            category_id = $2, support_role_id = $3, closer_role_id = $4, max_tickets_per_user = $5
+        """, guild_id, category_id, support_role_id, closer_role_id, max_tickets_per_user)
+
+async def create_ticket(guild_id: int, channel_id: int, user_id: int) -> int:
+    """Creates a ticket record and returns its ID."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            INSERT INTO tickets (guild_id, channel_id, user_id, status)
+            VALUES ($1, $2, $3, 'open')
+            RETURNING id
+        """, guild_id, channel_id, user_id)
+        return row['id']
+
+async def get_open_tickets(guild_id: int, user_id: int):
+    """Returns a list of open tickets for a particular user in a guild."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, channel_id FROM tickets 
+            WHERE guild_id = $1 AND user_id = $2 AND status = 'open'
+        """, guild_id, user_id)
+        return [dict(r) for r in rows] if rows else []
+
+async def close_ticket_by_channel(channel_id: int) -> dict:
+    """Marks a ticket as closed and returns the user ID."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            UPDATE tickets
+            SET status = 'closed'
+            WHERE channel_id = $1
+            RETURNING user_id, id
+        """, channel_id)
+        return dict(row) if row else None
+
+async def add_ticket_panel(message_id: int, guild_id: int, channel_id: int, title: str, description: str):
+    async with _pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO ticket_panels (message_id, guild_id, channel_id, title, description)
+            VALUES ($1, $2, $3, $4, $5)
+        """, message_id, guild_id, channel_id, title, description)
+
+async def get_ticket_panels(guild_id: int):
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM ticket_panels WHERE guild_id = $1", guild_id)
+        return [dict(r) for r in rows] if rows else []
+
+async def remove_ticket_panel(message_id: int):
+    async with _pool.acquire() as conn:
+        await conn.execute("DELETE FROM ticket_panels WHERE message_id = $1", message_id)

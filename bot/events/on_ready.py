@@ -42,16 +42,26 @@ async def on_ready():
             try:
                 # Status 1: /help
                 await bot_ref.change_presence(
-                    activity=discord.Activity(type=discord.ActivityType.listening, name="/help")
+                    activity=discord.Activity(type=discord.ActivityType.listening, name="/help | Atx.help")
                 )
                 await asyncio.sleep(300)
                 
-                # Status 2: Serving [x] Servers
+                # Status 2: Serving [x] Servers and [y] Users
                 server_count = len(bot_ref.guilds)
+                user_count = len(bot_ref.users)
                 await bot_ref.change_presence(
                     activity=discord.Activity(
                         type=discord.ActivityType.listening, 
-                        name=f"Serving {server_count} Servers"
+                        name=f"Serving {server_count} Servers and {user_count} Users"
+                    )
+                )
+                await asyncio.sleep(300)
+
+                # Status 3: Help/Link
+                await bot_ref.change_presence(
+                    activity=discord.Activity(
+                        type=discord.ActivityType.listening, 
+                        name="https://discord.gg/fWPDEFRF87"
                     )
                 )
                 await asyncio.sleep(300)

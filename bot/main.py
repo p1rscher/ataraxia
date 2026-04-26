@@ -63,7 +63,50 @@ async def get_prefix(bot_instance: commands.Bot, message: discord.Message) -> li
 
     return commands.when_mentioned_or(prefix)(bot_instance, message)
 
-bot = commands.Bot(command_prefix=get_prefix, intents=intents)
+class AtaraxiaContext(commands.Context):
+    async def send(self, *args, **kwargs):
+        if self.interaction is None:
+            is_ephemeral = kwargs.pop('ephemeral', False)
+            if is_ephemeral:
+                if 'delete_after' not in kwargs:
+                    kwargs['delete_after'] = 15
+                try:
+                    deleted_set = getattr(self.bot, '_mimic_ephemeral_deleted_ids', None)
+                    if deleted_set is None:
+                        deleted_set = set()
+                        self.bot._mimic_ephemeral_deleted_ids = deleted_set
+                        
+                    if self.message and self.message.id not in deleted_set:
+                        await self.message.delete()
+                        deleted_set.add(self.message.id)
+                except discord.HTTPException:
+                    pass
+        return await super().send(*args, **kwargs)
+
+    async def reply(self, *args, **kwargs):
+        if self.interaction is None:
+            is_ephemeral = kwargs.pop('ephemeral', False)
+            if is_ephemeral:
+                if 'delete_after' not in kwargs:
+                    kwargs['delete_after'] = 15
+                try:
+                    deleted_set = getattr(self.bot, '_mimic_ephemeral_deleted_ids', None)
+                    if deleted_set is None:
+                        deleted_set = set()
+                        self.bot._mimic_ephemeral_deleted_ids = deleted_set
+                        
+                    if self.message and self.message.id not in deleted_set:
+                        await self.message.delete()
+                        deleted_set.add(self.message.id)
+                except discord.HTTPException:
+                    pass
+        return await super().reply(*args, **kwargs)
+
+class AtaraxiaBot(commands.Bot):
+    async def get_context(self, message, *, cls=AtaraxiaContext):
+        return await super().get_context(message, cls=cls)
+
+bot = AtaraxiaBot(command_prefix=get_prefix, intents=intents, help_command=None)
 
 
 # Event imports
@@ -158,17 +201,17 @@ async def main():
     logger.info(f"📦 Loaded {loaded_count} cogs ({failed_count} failed)")
     
     # Set db reference in cogs that need it
-    if "cogs.bump_reminder" in bot.extensions:
-        from cogs import bump_reminder
+    if "cogs.admin.bump_reminder" in bot.extensions:
+        from cogs.admin import bump_reminder
         bump_reminder.db = db
-    if "cogs.admin_stats" in bot.extensions:
-        from cogs import admin_stats
+    if "cogs.admin.admin_stats" in bot.extensions:
+        from cogs.admin import admin_stats
         admin_stats.db = db
-    if "cogs.counting" in bot.extensions:
-        from cogs import counting
+    if "cogs.fun.counting" in bot.extensions:
+        from cogs.fun import counting
         counting.db = db
-    if "cogs.level_roles" in bot.extensions:
-        from cogs import level_roles
+    if "cogs.leveling.level_roles" in bot.extensions:
+        from cogs.leveling import level_roles
         level_roles.db = db
 
 

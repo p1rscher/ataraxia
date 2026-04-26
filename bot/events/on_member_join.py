@@ -19,30 +19,66 @@ async def on_member_join(member: discord.Member):
     settings = await db.get_autorole_settings(member.guild.id)
     
     if settings and settings['enabled']:
-        role_ids = settings['role_ids'] if settings['role_ids'] else []
+        if member.bot:
+            role_ids = settings.get('bot_role_ids') or []
+        else:
+            role_ids = settings.get('user_role_ids') or []
+            
         roles = [member.guild.get_role(rid) for rid in role_ids if member.guild.get_role(rid)]
         
         if roles:
             try:
                 await member.add_roles(*roles, reason="Autorole")
                 role_names = [r.name for r in roles]
-                logger.info(f"Assigned autoroles {role_names} to {member} in guild {member.guild.id}")
+                logger.info(f"Assigned autoroles {role_names} to {'bot' if member.bot else 'user'} {member} in guild {member.guild.id}")
             except Exception as e:
                 logger.error(f"Failed to assign autoroles to {member} in guild {member.guild.id}: {e}")
 
     # Send welcome message if configured
     welcome = await db.get_welcome_message(member.guild.id)
-    if welcome:
+    if welcome and welcome.get('channel_id'):
         channel = member.guild.get_channel(welcome['channel_id'])
         if channel:
             try:
-                text = welcome['message'].replace("{user}", member.mention).replace("{server}", member.guild.name)
-                embed = discord.Embed(description=text, color=await get_guild_color(member.guild.id, 'color_welcome'))
-                embed.set_author(name=str(member), icon_url=member.display_avatar.url)
-                embed.set_thumbnail(url=member.display_avatar.url)
-                embed.set_footer(text=f"{member.guild.name} • {member.guild.member_count} members")
-                await channel.send(embed=embed)
-                logger.info(f"Sent welcome message for {member} in guild {member.guild.id}")
+                def process_text(txt):
+                    if not txt: return ""
+                    txt = txt.replace("{user}", member.mention)
+                    txt = txt.replace("{user.name}", str(member))
+                    txt = txt.replace("{user.avatar}", member.display_avatar.url)
+                    txt = txt.replace("{server}", member.guild.name)
+                    txt = txt.replace("{server.icon}", member.guild.icon.url if member.guild.icon else "")
+                    txt = txt.replace("{member_count}", str(member.guild.member_count))
+                    return txt
+
+                content = process_text(welcome.get('message'))
+                
+                embed = None
+                if any(welcome.get(k) for k in ['embed_title', 'embed_description', 'embed_image', 'embed_thumbnail', 'embed_author_name', 'embed_footer_text']):
+                    embed = discord.Embed(
+                        title=process_text(welcome.get('embed_title')) or None,
+                        description=process_text(welcome.get('embed_description')) or None,
+                        color=await get_guild_color(member.guild.id, 'color_welcome')
+                    )
+                    
+                    if welcome.get('embed_author_name'):
+                        icon = process_text(welcome.get('embed_author_icon')) or None
+                        embed.set_author(name=process_text(welcome.get('embed_author_name')), icon_url=icon)
+                        
+                    if welcome.get('embed_thumbnail'):
+                        embed.set_thumbnail(url=process_text(welcome.get('embed_thumbnail')))
+                        
+                    if welcome.get('embed_image'):
+                        embed.set_image(url=process_text(welcome.get('embed_image')))
+                        
+                    if welcome.get('embed_footer_text'):
+                        icon = process_text(welcome.get('embed_footer_icon')) or None
+                        embed.set_footer(text=process_text(welcome.get('embed_footer_text')), icon_url=icon)
+
+                if not embed and not content:
+                    pass # Nothing to send
+                else:
+                    await channel.send(content=content if content else None, embed=embed)
+                    logger.info(f"Sent welcome message for {member} in guild {member.guild.id}")
             except Exception as e:
                 logger.error(f"Failed to send welcome message for {member} in guild {member.guild.id}: {e}")
 
