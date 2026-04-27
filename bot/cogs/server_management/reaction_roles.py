@@ -1,5 +1,11 @@
+import asyncio
+import io
 import logging
+import os
 from typing import Optional, List, Dict, Any
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import discord
 import emoji as emoji_lib
@@ -53,6 +59,132 @@ def normalize_emoji(raw_emoji: str) -> str:
         pass
 
     return sanitize_unicode_emoji(value)
+
+
+def normalize_image_url(raw_url: str) -> Optional[str]:
+    """Normalize and lightly validate image URLs used in embeds."""
+    if not raw_url:
+        return None
+
+    url = raw_url.strip()
+    if not url:
+        return None
+
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return None
+
+    # Discord-hosted images render more reliably in embeds when we request a
+    # moderate preview size instead of the maximum asset size.
+    if "cdn.discordapp.com" in url or "media.discordapp.net" in url:
+        sep = "&" if "?" in url else "?"
+        if "size=" not in url:
+            url = f"{url}{sep}size=1024"
+
+    return url
+
+
+def _probe_image_url(url: str) -> tuple[Optional[str], Optional[str], Optional[int], Optional[str]]:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; AtaraxiaBot/1.0; +https://ataraxia-bot.com)"
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            final_url = normalize_image_url(response.geturl()) or response.geturl()
+            content_type = response.headers.get_content_type()
+            content_length_raw = response.headers.get("Content-Length")
+            content_length = int(content_length_raw) if content_length_raw and content_length_raw.isdigit() else None
+            return final_url, content_type, content_length, None
+    except urllib.error.HTTPError as exc:
+        return None, None, None, f"The image host returned HTTP {exc.code}."
+    except urllib.error.URLError:
+        return None, None, None, "The image URL could not be reached."
+    except ValueError:
+        return None, None, None, "The image response was invalid."
+
+
+async def validate_image_url(raw_url: str) -> tuple[Optional[str], Optional[str]]:
+    normalized = normalize_image_url(raw_url)
+    if not normalized:
+        return None, "Invalid image URL. Please use a direct http/https image link."
+
+    final_url, content_type, content_length, error = await asyncio.to_thread(_probe_image_url, normalized)
+    if error:
+        return None, error
+
+    if not content_type or not content_type.startswith("image/"):
+        return None, (
+            "That link does not resolve to a direct image file. Use the raw image URL, "
+            "not a Google result page or image-host landing page."
+        )
+
+    if content_length and content_length > 15 * 1024 * 1024:
+        return None, "That image is too large for reliable embed loading. Please use a smaller image."
+
+    return final_url, None
+
+
+def is_discord_hosted_image(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    return "cdn.discordapp.com" in url or "media.discordapp.net" in url
+
+
+def _download_image_bytes(url: str) -> tuple[Optional[bytes], Optional[str], Optional[str], Optional[str]]:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; AtaraxiaBot/1.0; +https://ataraxia-bot.com)"
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            content_type = response.headers.get_content_type() or "application/octet-stream"
+            data = response.read()
+            final_url = response.geturl()
+            return data, content_type, final_url, None
+    except urllib.error.HTTPError as exc:
+        return None, None, None, f"The image host returned HTTP {exc.code}."
+    except urllib.error.URLError:
+        return None, None, None, "The image URL could not be reached."
+    except ValueError:
+        return None, None, None, "The image response was invalid."
+
+
+async def download_image_for_discord(url: str) -> tuple[Optional[discord.File], Optional[str]]:
+    data, content_type, final_url, error = await asyncio.to_thread(_download_image_bytes, url)
+    if error:
+        return None, error
+
+    if not data:
+        return None, "The image downloaded as empty data."
+
+    if not content_type or not content_type.startswith("image/"):
+        return None, "That link does not resolve to a direct image file."
+
+    if len(data) > 15 * 1024 * 1024:
+        return None, "That image is too large for reliable Discord uploads."
+
+    parsed = urllib.parse.urlparse(final_url or url)
+    base_name = os.path.basename(parsed.path) or "reaction-role-image"
+    stem, ext = os.path.splitext(base_name)
+
+    if not ext:
+        guessed_ext = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+        }.get(content_type, ".img")
+        ext = guessed_ext
+
+    safe_stem = stem[:40] or "reaction-role-image"
+    filename = f"{safe_stem}{ext}"
+    return discord.File(io.BytesIO(data), filename=filename), None
 
 
 def format_emoji_for_option(emoji_value: str):
@@ -298,16 +430,32 @@ class TextEditorModal(discord.ui.Modal, title="Edit Panel Output"):
     async def on_submit(self, interaction: commands.Context):
         title_val = str(self.p_title).strip()
         desc_val = str(self.p_desc).strip()
-        
-        # Ensure we don't have an empty embed
-        if not title_val and not desc_val:
-            title_val = "Reaction Roles"
+        raw_image_url = str(self.p_img).strip()
+        image_val = None
+
+        if raw_image_url:
+            image_val, image_error = await validate_image_url(raw_image_url)
+            if image_error:
+                await _safe_send(
+                    interaction,
+                    image_error,
+                    ephemeral=True,
+                )
+                return
+
+        if raw_image_url and not image_val:
+            await _safe_send(
+                interaction,
+                "Invalid image URL. Please use a direct http/https image link.",
+                ephemeral=True,
+            )
+            return
             
         await db.update_reaction_role_message(
             self.editor_view.message_id,
             title=title_val if title_val else "",
             description=desc_val if desc_val else None,
-            image_url=str(self.p_img) if str(self.p_img) else None
+            image_url=image_val
         )
         await self.editor_view.refresh(interaction)
 
@@ -423,13 +571,13 @@ class DashboardEditorView(discord.ui.View):
                 desc += f"{e['emoji']} -> <@&{e['role_id']}>\n"
                 
         embed = discord.Embed(
-            title=self.panel['title'],
-            description=desc,
+            title=(self.panel.get('title') or None),
+            description=(desc or None),
             color=await get_guild_color(self.panel['guild_id'])
         )
         if self.panel.get('image_url'):
             try:
-                embed.set_image(url=self.panel['image_url'])
+                embed.set_image(url=normalize_image_url(self.panel['image_url']) or self.panel['image_url'])
             except Exception:
                 pass
         embed.set_footer(text="👁️ Preview of your Role Message")
@@ -464,9 +612,8 @@ class DashboardEditorView(discord.ui.View):
                     try:
                         msg = await channel.fetch_message(self.message_id)
                         live_view = DynamicRoleView(self.panel, self.entries, guild)
-                        live_embed = await self._build_preview_embed()
-                        live_embed.set_footer(text=None)
-                        await msg.edit(embed=live_embed, view=live_view)
+                        live_embed, live_attachments = await self.cog._build_panel_embed_and_attachments(self.panel, self.entries)
+                        await msg.edit(embed=live_embed, view=live_view, attachments=live_attachments)
                     except Exception:
                         pass
 
@@ -673,6 +820,35 @@ class ReactionRolesCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def _build_panel_embed_and_attachments(self, panel: dict, entries: list):
+        desc = panel.get('description') or ""
+        if entries and panel.get('include_overview', False):
+            desc += "\n\n**Roles:**\n"
+            for e in entries:
+                desc += f"{e['emoji']} -> <@&{e['role_id']}>\n"
+
+        embed = discord.Embed(
+            title=(panel.get('title') or None),
+            description=(desc or None),
+            color=await get_guild_color(panel['guild_id'])
+        )
+
+        attachments = []
+        image_url = panel.get('image_url')
+        if image_url:
+            normalized_url = normalize_image_url(image_url) or image_url
+            if is_discord_hosted_image(normalized_url):
+                embed.set_image(url=normalized_url)
+            else:
+                hosted_file, image_error = await download_image_for_discord(normalized_url)
+                if hosted_file is not None:
+                    attachments.append(hosted_file)
+                    embed.set_image(url=f"attachment://{hosted_file.filename}")
+                else:
+                    logger.warning("Failed to rehost reaction role image for panel %s: %s", panel.get('message_id'), image_error)
+
+        return embed, attachments
+
     async def _resolve_message(self, panel):
         guild = self.bot.get_guild(panel['guild_id'])
         if guild is None:
@@ -710,23 +886,7 @@ class ReactionRolesCog(commands.Cog):
             if not channel: return
 
             entries = await db.get_reaction_role_entries(message_id)
-            
-            desc = panel.get('description') or ""
-            if entries and panel.get('include_overview', False):
-                desc += "\n\n**Roles:**\n"
-                for e in entries:
-                    desc += f"{e['emoji']} -> <@&{e['role_id']}>\n"
-                    
-            embed = discord.Embed(
-                title=panel['title'],
-                description=desc,
-                color=await get_guild_color(panel['guild_id'])
-            )
-            if panel.get('image_url'):
-                try:
-                    embed.set_image(url=panel['image_url'])
-                except Exception:
-                    pass
+            embed, embed_attachments = await self._build_panel_embed_and_attachments(panel, entries)
             
             panel_to_use = dict(panel)
             if message_id < 0:
@@ -746,7 +906,7 @@ class ReactionRolesCog(commands.Cog):
                 
             # ATTACH UI components
             view = DynamicRoleView(panel_to_use, entries, guild)
-            await target_msg.edit(content=None, embed=embed, view=view)
+            await target_msg.edit(content=None, embed=embed, view=view, attachments=embed_attachments)
             try:
                 await target_msg.clear_reactions()
             except discord.Forbidden:
