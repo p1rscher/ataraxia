@@ -19,7 +19,7 @@ class AboutCog(commands.Cog):
         
         embed.add_field(
             name="Developer",
-            value="p1rscher & ur.fav.kuma",
+            value="pirscher (Git: p1rscher) & ur.fav.kuma (Git: zKxma)",
             inline=False
         )
         
@@ -43,7 +43,7 @@ class AboutCog(commands.Cog):
         
         embed.add_field(
             name="License",
-            value="MIT License © 2025 p1rscher\nSee [full licenses](https://ataraxia-bot.com/licenses)",
+            value="MIT License © 2025-2026 pirscher (Git: p1rscher)\nSee [full licenses](https://ataraxia-bot.com/licenses)",
             inline=False
         )
         
