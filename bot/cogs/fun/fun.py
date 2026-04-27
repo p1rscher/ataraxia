@@ -2,9 +2,9 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from discord.ext import commands
 import random
 import logging
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,44 @@ class FunCog(commands.Cog):
         poll_message = await ctx.original_response()
         for i in range(len(option_list)):
             await poll_message.add_reaction(discord.PartialEmoji.from_str(f"{i+1}️⃣"))
+
+    @commands.hybrid_command(name="joke", description="Tells a fresh joke directly from the internet")
+    async def joke(self, ctx: commands.Context):
+        # We enforce safe/clean jokes by default through query parameters
+        url = "https://v2.jokeapi.dev/joke/Any?safe-mode"
+        
+        await getattr(ctx, "interaction", ctx).response.defer() if hasattr(ctx, "interaction") and ctx.interaction else None
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=5) as response:
+                    data = await response.json()
+                    
+                    if data.get("error"):
+                        await ctx.send("The API threw a fit and refused to tell a joke. Try again later!", ephemeral=True)
+                        return
+                    
+                    embed = discord.Embed(title="🎭 Here's a Joke", color=discord.Color.gold())
+                    
+                    if data["type"] == "twopart":
+                        embed.description = f"**{data['setup']}**\n\n||{data['delivery']}||"
+                    else:
+                        embed.description = f"**{data['joke']}**"
+                    
+                    embed.set_footer(text=f"Category: {data['category']}")
+                    
+                    if hasattr(ctx, "interaction") and ctx.interaction:
+                        await ctx.interaction.followup.send(embed=embed)
+                    else:
+                        await ctx.send(embed=embed)
+                        
+        except Exception as e:
+            logger.error(f"Error fetching joke: {e}")
+            msg = "Failed to reach the joke repository. The comedian is out sick today."
+            if hasattr(ctx, "interaction") and ctx.interaction:
+                await ctx.interaction.followup.send(msg)
+            else:
+                await ctx.send(msg)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(FunCog(bot))
