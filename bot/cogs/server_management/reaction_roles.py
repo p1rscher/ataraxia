@@ -18,6 +18,9 @@ from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
+REMOVE_PANEL_ROLES_VALUE = "__rr_remove_panel_roles__"
+REMOVE_PANEL_ROLES_EMOJI = "❌"
+
 
 
 async def _safe_send(inter, *args, **kwargs):
@@ -326,12 +329,24 @@ class DynamicRoleSelect(discord.ui.Select):
                 description=e.get('description')[:100] if e.get('description') else None,
                 emoji=emo
             ))
+
+        if panel.get('role_removal', True):
+            options.append(discord.SelectOption(
+                label="Remove my roles",
+                value=REMOVE_PANEL_ROLES_VALUE,
+                description="Remove your currently assigned roles from this panel",
+                emoji=REMOVE_PANEL_ROLES_EMOJI
+            ))
+
+        placeholder = "Select a role..."
+        if panel.get('role_removal', True):
+            placeholder = "Select a role or remove your roles..."
             
         super().__init__(
-            placeholder="Select a role...",
+            placeholder=placeholder,
             options=options,
-            min_values=1, # Single select mode, handle logic dynamically
-            max_values=1 if not panel.get('multiple_slots', True) else min(len(options), 25),
+            min_values=1, # Require at least one selection in both single- and multi-slot modes.
+            max_values=1 if not panel.get('multiple_slots', True) else min(len(entries), 25),
             custom_id=f"rrsel_{panel['message_id']}"
         )
 
@@ -350,7 +365,20 @@ class DynamicRoleSelect(discord.ui.Select):
             return
 
         # Figure out which roles they selected
-        selected_ids = [int(v) for v in self.values]
+        remove_panel_roles = REMOVE_PANEL_ROLES_VALUE in self.values
+        if remove_panel_roles:
+            for entry in self.entries:
+                role = guild.get_role(entry['role_id'])
+                if not role or member.get_role(entry['role_id']) is None:
+                    continue
+
+                try:
+                    await member.remove_roles(role, reason="Reaction Role Menu")
+                    removed_roles.append(role.mention)
+                except discord.Forbidden:
+                    errors.append(f"Cannot remove {role.mention}")
+
+        selected_ids = [int(v) for v in self.values if v != REMOVE_PANEL_ROLES_VALUE]
         all_entry_ids = [e['role_id'] for e in self.entries]
         
         for r_id in all_entry_ids:
@@ -377,11 +405,11 @@ class DynamicRoleSelect(discord.ui.Select):
 
         msgs = []
         if added_roles: msgs.append(f"✅ Added: {', '.join(added_roles)}")
-        if removed_roles: msgs.append(f"❌ Removed: {', '.join(removed_roles)}")
+        if removed_roles: msgs.append(f"{REMOVE_PANEL_ROLES_EMOJI} Removed: {', '.join(removed_roles)}")
         if errors: msgs.append("⚠️ Errors: " + ", ".join(errors))
         
         if not msgs:
-            msgs.append("No roles were changed.")
+            msgs.append("You do not currently have any roles from this panel." if remove_panel_roles else "No roles were changed.")
             
         await _safe_send(interaction, "\n".join(msgs), ephemeral=True)
         
