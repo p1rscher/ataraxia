@@ -18,6 +18,8 @@ from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
+REMOVE_PANEL_ROLES_VALUE = "__rr_remove_panel_roles__"
+
 
 
 async def _safe_send(inter, *args, **kwargs):
@@ -326,9 +328,17 @@ class DynamicRoleSelect(discord.ui.Select):
                 description=e.get('description')[:100] if e.get('description') else None,
                 emoji=emo
             ))
+
+        if panel.get('role_removal', True):
+            options.append(discord.SelectOption(
+                label="Remove my roles",
+                value=REMOVE_PANEL_ROLES_VALUE,
+                description="Remove your currently assigned roles from this panel",
+                emoji="❌"
+            ))
             
         super().__init__(
-            placeholder="Select a role...",
+            placeholder="Select a role..." if not panel.get('role_removal', True) else "Select a role or remove your roles...",
             options=options,
             min_values=1, # Single select mode, handle logic dynamically
             max_values=1 if not panel.get('multiple_slots', True) else min(len(options), 25),
@@ -350,6 +360,34 @@ class DynamicRoleSelect(discord.ui.Select):
             return
 
         # Figure out which roles they selected
+        if REMOVE_PANEL_ROLES_VALUE in self.values:
+            if len(self.values) > 1:
+                await _safe_send(interaction, "Select role removal by itself.", ephemeral=True)
+                return
+
+            for entry in self.entries:
+                role = guild.get_role(entry['role_id'])
+                if not role or member.get_role(entry['role_id']) is None:
+                    continue
+
+                try:
+                    await member.remove_roles(role, reason="Reaction Role Menu")
+                    removed_roles.append(role.mention)
+                except discord.Forbidden:
+                    errors.append(f"Cannot remove {role.mention}")
+
+            msgs = []
+            if removed_roles: msgs.append(f"❌ Removed: {', '.join(removed_roles)}")
+            if errors: msgs.append("⚠️ Errors: " + ", ".join(errors))
+            if not msgs:
+                msgs.append("You do not currently have any roles from this panel.")
+
+            await _safe_send(interaction, "\n".join(msgs), ephemeral=True)
+
+            if self.panel.get('show_counters', False) and hasattr(self.view, "refresh_counters"):
+                await self.view.refresh_counters(interaction)
+            return
+
         selected_ids = [int(v) for v in self.values]
         all_entry_ids = [e['role_id'] for e in self.entries]
         
