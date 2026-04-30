@@ -8,9 +8,6 @@ from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
-# Database reference (set in main.py)
-db = None
-
 class CountingCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -25,7 +22,7 @@ class CountingCog(commands.Cog):
     async def counting_setup(self, interaction: commands.Context, channel: discord.TextChannel):
         """Setup a counting channel"""
         try:
-            await db.set_counting_channel(interaction.guild.id, channel.id)
+            await self.bot.db.set_counting_channel(interaction.guild.id, channel.id)
             
             embed = discord.Embed(
                 title="✅ Counting Channel Setup",
@@ -46,7 +43,7 @@ class CountingCog(commands.Cog):
     async def counting_remove(self, interaction: commands.Context):
         """Remove the counting channel setup"""
         try:
-            await db.remove_counting_channel(interaction.guild.id)
+            await self.bot.db.remove_counting_channel(interaction.guild.id)
             
             embed = discord.Embed(
                 title="✅ Counting Channel Removed",
@@ -63,7 +60,7 @@ class CountingCog(commands.Cog):
     async def counting_status(self, interaction: commands.Context):
         """Check the current counting status"""
         try:
-            settings = await db.get_counting_settings(interaction.guild.id)
+            settings = await self.bot.db.get_counting_settings(interaction.guild.id)
             
             if not settings:
                 await interaction.send("❌ No counting channel has been set up yet.", ephemeral=True)
@@ -103,7 +100,7 @@ class CountingCog(commands.Cog):
     async def counting_reset(self, interaction: commands.Context):
         """Reset the counting channel to 0"""
         try:
-            await db.reset_counting(interaction.guild.id)
+            await self.bot.db.reset_counting(interaction.guild.id)
             
             embed = discord.Embed(
                 title="✅ Counting Reset",
@@ -120,7 +117,7 @@ class CountingCog(commands.Cog):
     async def counting_leaderboard(self, interaction: commands.Context):
         """Show the counting leaderboard"""
         try:
-            leaderboard = await db.get_counting_leaderboard(interaction.guild.id, limit=10)
+            leaderboard = await self.bot.db.get_counting_leaderboard(interaction.guild.id, limit=10)
             
             if not leaderboard:
                 await interaction.send("❌ No counting data available yet.", ephemeral=True)
@@ -158,7 +155,7 @@ class CountingCog(commands.Cog):
             return
         
         try:
-            settings = await db.get_counting_settings(message.guild.id)
+            settings = await self.bot.db.get_counting_settings(message.guild.id)
             
             if not settings or settings['channel_id'] != message.channel.id:
                 return
@@ -201,18 +198,18 @@ class CountingCog(commands.Cog):
                 await message.add_reaction("✅")
                 
                 # Update database
-                await db.update_counting(
+                await self.bot.db.update_counting(
                     message.guild.id,
                     new_number=expected_number,
                     last_user_id=message.author.id
                 )
                 
                 # Update user stats
-                await db.increment_user_counting(message.guild.id, message.author.id)
+                await self.bot.db.increment_user_counting(message.guild.id, message.author.id)
                 
                 # Check for new high score
                 if expected_number > high_score:
-                    await db.update_counting_highscore(message.guild.id, expected_number)
+                    await self.bot.db.update_counting_highscore(message.guild.id, expected_number)
                     
                     if expected_number % 100 == 0:  # Celebrate every 100
                         embed = discord.Embed(
@@ -239,7 +236,7 @@ class CountingCog(commands.Cog):
                 await message.channel.send(embed=embed)
                 
                 # Reset counting
-                await db.reset_counting(message.guild.id)
+                await self.bot.db.reset_counting(message.guild.id)
                 
         except Exception as e:
             logger.error(f"Error in counting on_message: {e}", exc_info=True)

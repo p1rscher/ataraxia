@@ -1,8 +1,5 @@
 import discord
 
-# Set database reference from main.py
-db = None
-
 async def on_interaction(ctx: discord.Interaction):
     """Monitors commands"""
 

@@ -8,9 +8,6 @@ from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
-# Database reference (set in main.py)
-db = None
-
 class LevelRolesCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -47,7 +44,7 @@ class LevelRolesCog(commands.Cog):
             return
         
         try:
-            await db.add_level_role(interaction.guild.id, level, role.id)
+            await self.bot.db.add_level_role(interaction.guild.id, level, role.id)
             
             embed = discord.Embed(
                 title="✅ Level Role Added",
@@ -66,13 +63,13 @@ class LevelRolesCog(commands.Cog):
     async def levelrole_remove(self, interaction: commands.Context, level: int):
         """Remove a level role reward"""
         try:
-            role_id = await db.get_level_role(interaction.guild.id, level)
+            role_id = await self.bot.db.get_level_role(interaction.guild.id, level)
             
             if not role_id:
                 await interaction.send(f"❌ No role is configured for Level {level}.", ephemeral=True)
                 return
             
-            await db.remove_level_role(interaction.guild.id, level)
+            await self.bot.db.remove_level_role(interaction.guild.id, level)
             
             role = interaction.guild.get_role(role_id)
             role_mention = role.mention if role else f"Role ID: {role_id}"
@@ -92,7 +89,7 @@ class LevelRolesCog(commands.Cog):
     async def levelrole_list(self, interaction: commands.Context):
         """List all level role rewards"""
         try:
-            level_roles = await db.get_all_level_roles(interaction.guild.id)
+            level_roles = await self.bot.db.get_all_level_roles(interaction.guild.id)
             
             if not level_roles:
                 await interaction.send("❌ No level roles have been configured yet.", ephemeral=True)
@@ -138,7 +135,7 @@ class LevelRolesCog(commands.Cog):
         await interaction.defer(ephemeral=True)
         
         try:
-            level_roles = await db.get_all_level_roles(interaction.guild.id)
+            level_roles = await self.bot.db.get_all_level_roles(interaction.guild.id)
             
             if not level_roles:
                 await interaction.send("❌ No level roles have been configured yet.", ephemeral=True)
@@ -174,7 +171,7 @@ class LevelRolesCog(commands.Cog):
             return
         
         try:
-            leaderboard_data = await db.get_leaderboard(interaction.guild.id, limit)
+            leaderboard_data = await self.bot.db.get_leaderboard(interaction.guild.id, limit)
             
             if not leaderboard_data:
                 await interaction.send("❌ No level data available yet.", ephemeral=True)
@@ -209,7 +206,7 @@ class LevelRolesCog(commands.Cog):
         target = user or interaction.author
         
         try:
-            level_data = await db.get_level(target.id, interaction.guild.id)
+            level_data = await self.bot.db.get_level(target.id, interaction.guild.id)
             
             if not level_data:
                 await interaction.send(
@@ -233,7 +230,7 @@ class LevelRolesCog(commands.Cog):
             progress_percentage = (xp_in_level / xp_needed_in_level) * 100 if xp_needed_in_level > 0 else 0
             
             # Get rank
-            leaderboard = await db.get_leaderboard(interaction.guild.id, 1000)
+            leaderboard = await self.bot.db.get_leaderboard(interaction.guild.id, 1000)
             rank = None
             for idx, (uid, _, _) in enumerate(leaderboard, start=1):
                 if uid == target.id:
@@ -275,7 +272,7 @@ class LevelRolesCog(commands.Cog):
         """Internal method to sync roles for a single user"""
         try:
             # Get user's current level
-            level_data = await db.get_level(member.id, guild.id)
+            level_data = await self.bot.db.get_level(member.id, guild.id)
             if not level_data:
                 return
             

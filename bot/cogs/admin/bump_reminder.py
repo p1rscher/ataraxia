@@ -10,9 +10,6 @@ from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
-# Get database reference from main.py
-db = None
-
 class BumpReminder(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -44,7 +41,7 @@ class BumpReminder(commands.Cog):
             await ctx.send("❌ You need administrator permissions for this command!", ephemeral=True)
             return
         
-        await db.set_bump_settings(
+        await self.bot.db.set_bump_settings(
             guild_id=ctx.guild.id,
             enabled=True,
             bump_role_id=bump_role.id,
@@ -67,7 +64,7 @@ class BumpReminder(commands.Cog):
             await ctx.send("❌ You need administrator permissions for this command!", ephemeral=True)
             return
         
-        await db.set_bump_settings(
+        await self.bot.db.set_bump_settings(
             guild_id=ctx.guild.id,
             enabled=False
         )
@@ -77,7 +74,7 @@ class BumpReminder(commands.Cog):
     @bump_group.command(name="status", description="Show the status of the bump reminder system")
     @commands.guild_only()
     async def bump_status(self, ctx: commands.Context):
-        settings = await db.get_bump_settings(ctx.guild.id)
+        settings = await self.bot.db.get_bump_settings(ctx.guild.id)
         
         if not settings or not settings['enabled']:
             await ctx.send("❌ Bump reminder is not enabled!", ephemeral=True)
@@ -119,7 +116,7 @@ class BumpReminder(commands.Cog):
         """Check every minute if a bump reminder is due"""
         logger.debug("check_bump_reminders: Running iteration")
         try:
-            guilds = await db.get_all_bump_guilds()
+            guilds = await self.bot.db.get_all_bump_guilds()
             logger.debug(f"check_bump_reminders: Found {len(guilds)} guilds with bump enabled")
             
             for guild_settings in guilds:
@@ -171,7 +168,7 @@ class BumpReminder(commands.Cog):
                                     allowed_mentions=discord.AllowedMentions(roles=True)
                                 )
                                 # Save reminder message ID
-                                await db.update_reminded_id(guild.id, msg.id)
+                                await self.bot.db.update_reminded_id(guild.id, msg.id)
                                 logger.info(f"Sent bump reminder for guild {guild.id} (msg_id: {msg.id})")
                             except Exception as e:
                                 logger.error(f"Error sending bump reminder in guild {guild.id}: {e}")

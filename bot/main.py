@@ -162,9 +162,6 @@ on_raw_reaction_remove.bot = bot
 on_guild_join.bot = bot
 on_raw_reaction_add.bot = bot
 close.bot = bot
-# Database reference for events that need it
-on_interaction.db = db
-on_app_command_completion.db = db
 
 
 async def main():
@@ -172,6 +169,7 @@ async def main():
     TOKEN = os.getenv("BOT_TOKEN")
 
     await db.init_db()  # Initialize the database
+    bot.db = db  # Make db accessible to all cogs via self.bot.db
     
     # Load all extensions from cogs directory (recursively)
     # Supports both flat structure (cogs/file.py) and categorized (cogs/category/file.py)
@@ -200,21 +198,6 @@ async def main():
     
     logger.info(f"📦 Loaded {loaded_count} cogs ({failed_count} failed)")
     
-    # Set db reference in cogs that need it
-    if "cogs.admin.bump_reminder" in bot.extensions:
-        from cogs.admin import bump_reminder
-        bump_reminder.db = db
-    if "cogs.admin.admin_stats" in bot.extensions:
-        from cogs.admin import admin_stats
-        admin_stats.db = db
-    if "cogs.fun.counting" in bot.extensions:
-        from cogs.fun import counting
-        counting.db = db
-    if "cogs.leveling.level_roles" in bot.extensions:
-        from cogs.leveling import level_roles
-        level_roles.db = db
-
-
     close.setup_signal_handlers()
 
     if not TOKEN:
