@@ -225,6 +225,28 @@ def format_emoji_for_option(emoji_value: str):
     return sanitize_unicode_emoji(emoji_value)
 
 
+def emoji_requires_label_fallback(component_emoji) -> bool:
+    """Return True when Discord component emoji handling is known to reject the value."""
+    if not isinstance(component_emoji, str):
+        return False
+
+    return any(0x1F1E6 <= ord(char) <= 0x1F1FF for char in component_emoji)
+
+
+def build_component_label_and_emoji(label: str, emoji_value: str) -> tuple[str, Optional[Any]]:
+    """Move unsupported component emoji into the visible label text instead."""
+    formatted_emoji = format_emoji_for_option(emoji_value)
+    safe_label = label or ""
+
+    if emoji_requires_label_fallback(formatted_emoji):
+        emoji_text = normalize_emoji(emoji_value)
+        if emoji_text:
+            safe_label = f"{emoji_text} {safe_label}".strip()
+        return safe_label, None
+
+    return safe_label, formatted_emoji
+
+
 # ==========================================
 # DYNAMIC INTERACTIVE V2 ENGINE
 # ==========================================
@@ -287,10 +309,12 @@ class DynamicRoleButton(discord.ui.Button):
             count = len(role.members) if role else 0
             label = f"{label} | {count}" if label else str(count)
 
+        label, button_emoji = build_component_label_and_emoji(label, entry['emoji'])
+
         super().__init__(
             style=discord.ButtonStyle.primary,
             label=label if label else "\u200b",
-            emoji=format_emoji_for_option(entry['emoji']),
+            emoji=button_emoji,
             custom_id=f"rrbtn_{panel['message_id']}_{entry['role_id']}"
         )
 
@@ -322,7 +346,7 @@ class DynamicRoleSelect(discord.ui.Select):
             role = guild.get_role(e['role_id']) if guild else None
             role_name = role.name if role else f"Role {e['role_id']}"
             label = e.get('label') or role_name
-            emo = format_emoji_for_option(e['emoji'])
+            label, emo = build_component_label_and_emoji(label, e['emoji'])
             options.append(discord.SelectOption(
                 label=label[:100], 
                 value=str(e['role_id']),
