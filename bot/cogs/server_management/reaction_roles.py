@@ -247,6 +247,15 @@ def build_component_label_and_emoji(label: str, emoji_value: str) -> tuple[str, 
     return safe_label, formatted_emoji
 
 
+def build_select_option_label(label: str, emoji_value: str) -> str:
+    """Return a select-option label with emoji rendered as text to avoid Discord form-body failures."""
+    safe_label = label or ""
+    emoji_text = normalize_emoji(emoji_value)
+    if emoji_text:
+        safe_label = f"{emoji_text} {safe_label}".strip()
+    return safe_label
+
+
 # ==========================================
 # DYNAMIC INTERACTIVE V2 ENGINE
 # ==========================================
@@ -346,20 +355,18 @@ class DynamicRoleSelect(discord.ui.Select):
             role = guild.get_role(e['role_id']) if guild else None
             role_name = role.name if role else f"Role {e['role_id']}"
             label = e.get('label') or role_name
-            label, emo = build_component_label_and_emoji(label, e['emoji'])
+            label = build_select_option_label(label, e['emoji'])
             options.append(discord.SelectOption(
                 label=label[:100], 
                 value=str(e['role_id']),
-                description=e.get('description')[:100] if e.get('description') else None,
-                emoji=emo
+                description=e.get('description')[:100] if e.get('description') else None
             ))
 
         if panel.get('role_removal', True):
             options.append(discord.SelectOption(
-                label="Remove my roles",
+                label=f"{REMOVE_PANEL_ROLES_EMOJI} Remove my roles",
                 value=REMOVE_PANEL_ROLES_VALUE,
-                description="Remove your currently assigned roles from this panel",
-                emoji=REMOVE_PANEL_ROLES_EMOJI
+                description="Remove your currently assigned roles from this panel"
             ))
 
         placeholder = "Select a role..."
