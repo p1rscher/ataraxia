@@ -190,7 +190,7 @@ async def download_image_for_discord(url: str) -> tuple[Optional[discord.File], 
     return discord.File(io.BytesIO(data), filename=filename), None
 
 
-def format_emoji_for_option(emoji_value: str):
+def format_emoji_for_option(emoji_value: str) -> Optional[str | discord.PartialEmoji]:
     """Safe formatting for public buttons (only). In menus, we use labels."""
     if not emoji_value:
         return None
@@ -225,7 +225,7 @@ def format_emoji_for_option(emoji_value: str):
     return sanitize_unicode_emoji(emoji_value)
 
 
-def emoji_requires_label_fallback(component_emoji) -> bool:
+def emoji_requires_label_fallback(component_emoji: Optional[str | discord.PartialEmoji]) -> bool:
     """Return True for component emoji values Discord rejects, such as regional-indicator flag sequences."""
     if not isinstance(component_emoji, str):
         return False
@@ -233,7 +233,7 @@ def emoji_requires_label_fallback(component_emoji) -> bool:
     return any(0x1F1E6 <= ord(char) <= 0x1F1FF for char in component_emoji)
 
 
-def build_component_label_and_emoji(label: str, emoji_value: str) -> tuple[str, Optional[Any]]:
+def build_component_label_and_emoji(label: str, emoji_value: str) -> tuple[str, Optional[str | discord.PartialEmoji]]:
     """Return a `(label, emoji)` tuple, moving unsupported emoji values into the visible label text."""
     formatted_emoji = format_emoji_for_option(emoji_value)
     safe_label = label or ""
