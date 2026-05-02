@@ -190,7 +190,7 @@ async def download_image_for_discord(url: str) -> tuple[Optional[discord.File], 
     return discord.File(io.BytesIO(data), filename=filename), None
 
 
-def format_emoji_for_option(emoji_value: str):
+def format_emoji_for_option(emoji_value: str) -> Optional[str | discord.PartialEmoji]:
     """Safe formatting for public buttons (only). In menus, we use labels."""
     if not emoji_value:
         return None
@@ -223,6 +223,37 @@ def format_emoji_for_option(emoji_value: str):
         pass
 
     return sanitize_unicode_emoji(emoji_value)
+
+
+def emoji_requires_label_fallback(component_emoji: Optional[str | discord.PartialEmoji]) -> bool:
+    """Return True for component emoji values Discord rejects, such as regional-indicator flag sequences."""
+    if not isinstance(component_emoji, str):
+        return False
+
+    return any(0x1F1E6 <= ord(char) <= 0x1F1FF for char in component_emoji)
+
+
+def build_component_label_and_emoji(label: str, emoji_value: str) -> tuple[str, Optional[str | discord.PartialEmoji]]:
+    """Return a `(label, emoji)` tuple, moving unsupported emoji values into the visible label text."""
+    formatted_emoji = format_emoji_for_option(emoji_value)
+    safe_label = label or ""
+
+    if emoji_requires_label_fallback(formatted_emoji):
+        emoji_text = normalize_emoji(emoji_value)
+        if emoji_text:
+            safe_label = f"{emoji_text} {safe_label}".strip()
+        return safe_label, None
+
+    return safe_label, formatted_emoji
+
+
+def build_select_option_label(label: str, emoji_value: str) -> str:
+    """Return a select-option label with emoji rendered as text to avoid Discord form-body failures."""
+    safe_label = label or ""
+    emoji_text = normalize_emoji(emoji_value)
+    if emoji_text:
+        safe_label = f"{emoji_text} {safe_label}".strip()
+    return safe_label
 
 
 # ==========================================
@@ -287,10 +318,12 @@ class DynamicRoleButton(discord.ui.Button):
             count = len(role.members) if role else 0
             label = f"{label} | {count}" if label else str(count)
 
+        label, button_emoji = build_component_label_and_emoji(label, entry['emoji'])
+
         super().__init__(
             style=discord.ButtonStyle.primary,
             label=label if label else "\u200b",
-            emoji=format_emoji_for_option(entry['emoji']),
+            emoji=button_emoji,
             custom_id=f"rrbtn_{panel['message_id']}_{entry['role_id']}"
         )
 
@@ -322,20 +355,18 @@ class DynamicRoleSelect(discord.ui.Select):
             role = guild.get_role(e['role_id']) if guild else None
             role_name = role.name if role else f"Role {e['role_id']}"
             label = e.get('label') or role_name
-            emo = format_emoji_for_option(e['emoji'])
+            label = build_select_option_label(label, e['emoji'])
             options.append(discord.SelectOption(
                 label=label[:100], 
                 value=str(e['role_id']),
-                description=e.get('description')[:100] if e.get('description') else None,
-                emoji=emo
+                description=e.get('description')[:100] if e.get('description') else None
             ))
 
         if panel.get('role_removal', True):
             options.append(discord.SelectOption(
-                label="Remove my roles",
+                label=f"{REMOVE_PANEL_ROLES_EMOJI} Remove my roles",
                 value=REMOVE_PANEL_ROLES_VALUE,
-                description="Remove your currently assigned roles from this panel",
-                emoji=REMOVE_PANEL_ROLES_EMOJI
+                description="Remove your currently assigned roles from this panel"
             ))
 
         placeholder = "Select a role..."
