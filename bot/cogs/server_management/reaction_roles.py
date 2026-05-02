@@ -226,7 +226,7 @@ def format_emoji_for_option(emoji_value: str):
 
 
 def emoji_requires_label_fallback(component_emoji) -> bool:
-    """Return True when Discord component emoji handling is known to reject the value."""
+    """Return True for component emoji values Discord rejects, such as regional-indicator flag sequences."""
     if not isinstance(component_emoji, str):
         return False
 
@@ -234,7 +234,7 @@ def emoji_requires_label_fallback(component_emoji) -> bool:
 
 
 def build_component_label_and_emoji(label: str, emoji_value: str) -> tuple[str, Optional[Any]]:
-    """Move unsupported component emoji into the visible label text instead."""
+    """Return a `(label, emoji)` tuple, moving unsupported emoji values into the visible label text."""
     formatted_emoji = format_emoji_for_option(emoji_value)
     safe_label = label or ""
 
