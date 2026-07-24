@@ -325,6 +325,13 @@ async def init_db():
                 guild_id BIGINT PRIMARY KEY,
                 enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 trigger_chance DOUBLE PRECISION NOT NULL DEFAULT 0.06,
+                gif_chance DOUBLE PRECISION NOT NULL DEFAULT 0.08,
+                sticker_chance DOUBLE PRECISION NOT NULL DEFAULT 0.08,
+                cooldown_seconds INTEGER NOT NULL DEFAULT 180,
+                sticker_cooldown_seconds INTEGER NOT NULL DEFAULT 600,
+                text_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[],
+                gif_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[],
+                sticker_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[],
                 language_mode TEXT NOT NULL DEFAULT 'auto',
                 reply_always BOOLEAN NOT NULL DEFAULT TRUE,
                 allow_profanity BOOLEAN NOT NULL DEFAULT FALSE,
@@ -333,8 +340,8 @@ async def init_db():
                 trait_funny INTEGER NOT NULL DEFAULT 45,
                 trait_chaotic INTEGER NOT NULL DEFAULT 25,
                 ai_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                ai_chance DOUBLE PRECISION NOT NULL DEFAULT 0.15,
-                ai_daily_limit INTEGER NOT NULL DEFAULT 20,
+                ai_chance DOUBLE PRECISION NOT NULL DEFAULT 0.75,
+                ai_daily_limit INTEGER NOT NULL DEFAULT 5000,
                 ai_daily_used INTEGER NOT NULL DEFAULT 0,
                 ai_daily_date DATE
             )
@@ -342,7 +349,41 @@ async def init_db():
 
         await conn.execute(
             "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS gif_chance DOUBLE PRECISION NOT NULL DEFAULT 0.08"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS sticker_chance DOUBLE PRECISION NOT NULL DEFAULT 0.08"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
             "ADD COLUMN IF NOT EXISTS language_mode TEXT NOT NULL DEFAULT 'auto'"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS cooldown_seconds INTEGER NOT NULL DEFAULT 180"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS sticker_cooldown_seconds INTEGER NOT NULL DEFAULT 600"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS text_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[]"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS gif_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[]"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS sticker_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[]"
+        )
+        await conn.execute(
+            "UPDATE chat_personality_settings SET ai_chance = 0.75 WHERE ai_chance = 0.15"
+        )
+        await conn.execute(
+            "UPDATE chat_personality_settings SET ai_daily_limit = 5000 WHERE ai_daily_limit = 20"
         )
 
         await conn.execute("""
@@ -1765,6 +1806,13 @@ async def update_chat_personality_settings(guild_id: int, **kwargs):
     valid_keys = {
         "enabled",
         "trigger_chance",
+        "gif_chance",
+        "sticker_chance",
+        "cooldown_seconds",
+        "sticker_cooldown_seconds",
+        "text_blocked_channel_ids",
+        "gif_blocked_channel_ids",
+        "sticker_blocked_channel_ids",
         "language_mode",
         "reply_always",
         "allow_profanity",
