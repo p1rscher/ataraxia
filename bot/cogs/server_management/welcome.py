@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 from core import database_pg as db
-from utils.embeds import get_guild_color
+from utils.embeds import get_embed_color, has_time_placeholder, process_member_text
 
 logger = logging.getLogger(__name__)
 
@@ -121,39 +121,56 @@ class WelcomeDashboardView(discord.ui.View):
         guild = interaction.guild
         
         def process_text(txt):
-            if not txt: return ""
-            if not preview_mode: return txt
-            txt = txt.replace("{user}", member.mention)
-            txt = txt.replace("{user.name}", str(member))
-            txt = txt.replace("{user.avatar}", member.display_avatar.url)
-            txt = txt.replace("{server}", guild.name)
-            txt = txt.replace("{server.icon}", guild.icon.url if guild.icon else "")
-            txt = txt.replace("{member_count}", str(guild.member_count))
-            return txt
+            if not txt or not preview_mode:
+                return txt or ""
+            return process_member_text(txt, member)
+
+        preview_time = discord.utils.utcnow()
+
+        def process_embed_text(txt):
+            if not txt or not preview_mode:
+                return txt or ""
+            return process_member_text(txt, member, event_time=preview_time)
+
+        def process_footer_text(txt):
+            if not txt or not preview_mode:
+                return txt or ""
+            return process_member_text(txt, member, event_time=preview_time, time_value="")
 
         content = process_text(welcome.get('message'))
         
         embed = None
         if any(welcome.get(k) for k in ['embed_title', 'embed_description', 'embed_image', 'embed_thumbnail', 'embed_author_name', 'embed_footer_text']):
+            embed_values = [
+                welcome.get('embed_title'),
+                welcome.get('embed_description'),
+                welcome.get('embed_author_name'),
+                welcome.get('embed_author_icon'),
+                welcome.get('embed_thumbnail'),
+                welcome.get('embed_image'),
+                welcome.get('embed_footer_text'),
+                welcome.get('embed_footer_icon'),
+            ]
             embed = discord.Embed(
-                title=process_text(welcome.get('embed_title')) or None,
-                description=process_text(welcome.get('embed_description')) or None,
-                color=await get_guild_color(guild.id, 'color_welcome')
+                title=process_embed_text(welcome.get('embed_title')) or None,
+                description=process_embed_text(welcome.get('embed_description')) or None,
+                color=await get_embed_color(guild.id, 'welcome_message', 'color_welcome'),
+                timestamp=preview_time if preview_mode and has_time_placeholder(*embed_values) else None,
             )
             
             if welcome.get('embed_author_name'):
-                icon = process_text(welcome.get('embed_author_icon')) or None
-                embed.set_author(name=process_text(welcome.get('embed_author_name')), icon_url=icon)
+                icon = process_embed_text(welcome.get('embed_author_icon')) or None
+                embed.set_author(name=process_embed_text(welcome.get('embed_author_name')), icon_url=icon)
                 
             if welcome.get('embed_thumbnail'):
-                embed.set_thumbnail(url=process_text(welcome.get('embed_thumbnail')))
+                embed.set_thumbnail(url=process_embed_text(welcome.get('embed_thumbnail')))
                 
             if welcome.get('embed_image'):
-                embed.set_image(url=process_text(welcome.get('embed_image')))
+                embed.set_image(url=process_embed_text(welcome.get('embed_image')))
                 
             if welcome.get('embed_footer_text'):
-                icon = process_text(welcome.get('embed_footer_icon')) or None
-                embed.set_footer(text=process_text(welcome.get('embed_footer_text')), icon_url=icon)
+                icon = process_footer_text(welcome.get('embed_footer_icon')) or None
+                embed.set_footer(text=process_footer_text(welcome.get('embed_footer_text')), icon_url=icon)
                 
         return content, embed
 
@@ -174,7 +191,9 @@ class WelcomeDashboardView(discord.ui.View):
             "`{user.avatar}` - User's avatar URL\n"
             "`{server}` - Server name\n"
             "`{server.icon}` - Server icon URL\n"
-            "`{member_count}` - Total members"
+            "`{member_count}` - Human members only\n"
+            "`{member_count_ext}` - Human members with ordinal suffix (31st, 22nd, 13th)\n"
+            "`{time}` - Discord-localized time when the message is sent"
         )
         emb.add_field(name="Available Variables", value=vars_info, inline=False)
         return emb

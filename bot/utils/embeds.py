@@ -55,6 +55,54 @@ def ordinal(number: Optional[int]) -> str:
     return f"{number}{suffix}"
 
 
+def human_member_count(guild: discord.Guild) -> int:
+    """Count cached human members without counting bots."""
+    return sum(1 for member in guild.members if not member.bot)
+
+
+def member_template_values(
+    member: discord.Member,
+    *,
+    event_time: Optional[datetime.datetime] = None,
+) -> dict[str, str]:
+    """Return values for member-message placeholders."""
+    event_time = event_time or discord.utils.utcnow()
+    count = human_member_count(member.guild)
+    return {
+        "{user}": member.mention,
+        "{user.name}": str(member),
+        "{user.avatar}": member.display_avatar.url,
+        "{server}": member.guild.name,
+        "{server.icon}": member.guild.icon.url if member.guild.icon else "",
+        "{member_count}": str(count),
+        "{member_count_ext}": ordinal(count),
+        "{time}": f"<t:{int(event_time.timestamp())}:F>",
+    }
+
+
+def has_time_placeholder(*values: Optional[str]) -> bool:
+    """Return whether any embed value explicitly requests the send time."""
+    return any(isinstance(value, str) and "{time}" in value for value in values)
+
+
+def process_member_text(
+    text: Optional[str],
+    member: discord.Member,
+    *,
+    event_time: Optional[datetime.datetime] = None,
+    time_value: Optional[str] = None,
+) -> str:
+    """Replace supported member-message placeholders in a text value."""
+    if not text:
+        return ""
+    values = member_template_values(member, event_time=event_time)
+    if time_value is not None:
+        values["{time}"] = time_value
+    for placeholder, value in values.items():
+        text = text.replace(placeholder, value)
+    return text
+
+
 async def send_member_traffic_embed(
     member: discord.Member,
     event: str,
@@ -79,7 +127,7 @@ async def send_member_traffic_embed(
         return False
 
     now = timestamp or discord.utils.utcnow()
-    member_count = ordinal(member.guild.member_count)
+    member_count = human_member_count(member.guild)
     if event == 'join':
         title = f"{member.display_name} joined the server"
         embed = discord.Embed(
@@ -89,7 +137,7 @@ async def send_member_traffic_embed(
         )
         embed.add_field(name="User", value=member.mention, inline=True)
         embed.add_field(name="Account creation", value=f"<t:{int(member.created_at.timestamp())}:f> (<t:{int(member.created_at.timestamp())}:R>)", inline=True)
-        embed.add_field(name="Member count", value=member_count, inline=True)
+        embed.add_field(name="Member count", value=str(member_count), inline=True)
     elif event == 'leave':
         title = f"{member.display_name} left the server"
         embed = discord.Embed(
@@ -100,7 +148,7 @@ async def send_member_traffic_embed(
         embed.add_field(name="User", value=member.mention, inline=True)
         joined = f"<t:{int(member.joined_at.timestamp())}:f> (<t:{int(member.joined_at.timestamp())}:R>)" if member.joined_at else "Unknown"
         embed.add_field(name="Joined date", value=joined, inline=True)
-        embed.add_field(name="Member count", value=member_count, inline=True)
+        embed.add_field(name="Member count", value=str(member_count), inline=True)
     else:
         title = f"{member.display_name} boosted the server"
         embed = discord.Embed(
@@ -109,7 +157,7 @@ async def send_member_traffic_embed(
             timestamp=now,
         )
         embed.add_field(name="User", value=member.mention, inline=True)
-        embed.add_field(name="Member count", value=member_count, inline=True)
+        embed.add_field(name="Member count", value=str(member_count), inline=True)
 
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.set_footer(

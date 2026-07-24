@@ -359,6 +359,16 @@ View legacy fallback colors and individual embed overrides.
 **`/settings color reset`** 🟠
 Reset all fallback and individual embed colors.
 
+### Welcome-Embed-Platzhalter
+
+In `/welcome dashboard` können `{time}`, `{member_count}` und `{member_count_ext}` in den Text, Titel, die Beschreibung sowie in Autor- und Footer-Felder eingesetzt werden:
+
+- `{time}` - Discord-Zeitstempel des Versandzeitpunkts. In Titel, Beschreibung und normalen Feldern wird der vollständige Discord-Zeitstempeltext eingesetzt. Im Embed-Footer wird dafür das echte Embed-Timestamp-Feld verwendet, damit Discord es wie `gestern um 08:54 Uhr` rendert; ohne diesen Platzhalter wird kein Zeitstempel gesetzt.
+- `{member_count}` - Anzahl der menschlichen Mitglieder ohne Bots, zum Beispiel `31`.
+- `{member_count_ext}` - Anzahl der menschlichen Mitglieder mit englischer Ordinal-Endung, zum Beispiel `31st`, `22nd`, `13th` oder `4th`.
+
+Die bestehenden Platzhalter `{user}`, `{user.name}`, `{user.avatar}`, `{server}` und `{server.icon}` bleiben verfügbar.
+
 ### `/log` - Traffic Log Channels
 
 The shared `User Traffic Logs` channel is optional. Dedicated channels can be configured independently:

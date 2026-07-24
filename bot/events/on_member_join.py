@@ -2,7 +2,12 @@ import discord
 import logging
 from typing import Optional
 from core import database_pg as db
-from utils.embeds import get_embed_color, send_member_traffic_embed
+from utils.embeds import (
+    get_embed_color,
+    has_time_placeholder,
+    process_member_text,
+    send_member_traffic_embed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,39 +45,57 @@ async def on_member_join(member: discord.Member):
         channel = member.guild.get_channel(welcome['channel_id'])
         if channel:
             try:
-                def process_text(txt):
-                    if not txt: return ""
-                    txt = txt.replace("{user}", member.mention)
-                    txt = txt.replace("{user.name}", str(member))
-                    txt = txt.replace("{user.avatar}", member.display_avatar.url)
-                    txt = txt.replace("{server}", member.guild.name)
-                    txt = txt.replace("{server.icon}", member.guild.icon.url if member.guild.icon else "")
-                    txt = txt.replace("{member_count}", str(member.guild.member_count))
-                    return txt
-
+                event_time = discord.utils.utcnow()
+                process_text = lambda value: process_member_text(
+                    value,
+                    member,
+                    event_time=event_time,
+                )
+                process_embed_text = lambda value: process_member_text(
+                    value,
+                    member,
+                    event_time=event_time,
+                )
+                process_footer_text = lambda value: process_member_text(
+                    value,
+                    member,
+                    event_time=event_time,
+                    time_value="",
+                )
                 content = process_text(welcome.get('message'))
                 
                 embed = None
                 if any(welcome.get(k) for k in ['embed_title', 'embed_description', 'embed_image', 'embed_thumbnail', 'embed_author_name', 'embed_footer_text']):
+                    embed_values = [
+                        welcome.get('embed_title'),
+                        welcome.get('embed_description'),
+                        welcome.get('embed_author_name'),
+                        welcome.get('embed_author_icon'),
+                        welcome.get('embed_thumbnail'),
+                        welcome.get('embed_image'),
+                        welcome.get('embed_footer_text'),
+                        welcome.get('embed_footer_icon'),
+                    ]
                     embed = discord.Embed(
-                        title=process_text(welcome.get('embed_title')) or None,
-                        description=process_text(welcome.get('embed_description')) or None,
-                        color=await get_embed_color(member.guild.id, 'welcome_message', 'color_welcome')
+                        title=process_embed_text(welcome.get('embed_title')) or None,
+                        description=process_embed_text(welcome.get('embed_description')) or None,
+                        color=await get_embed_color(member.guild.id, 'welcome_message', 'color_welcome'),
+                        timestamp=event_time if has_time_placeholder(*embed_values) else None,
                     )
                     
                     if welcome.get('embed_author_name'):
-                        icon = process_text(welcome.get('embed_author_icon')) or None
-                        embed.set_author(name=process_text(welcome.get('embed_author_name')), icon_url=icon)
+                        icon = process_embed_text(welcome.get('embed_author_icon')) or None
+                        embed.set_author(name=process_embed_text(welcome.get('embed_author_name')), icon_url=icon)
                         
                     if welcome.get('embed_thumbnail'):
-                        embed.set_thumbnail(url=process_text(welcome.get('embed_thumbnail')))
+                        embed.set_thumbnail(url=process_embed_text(welcome.get('embed_thumbnail')))
                         
                     if welcome.get('embed_image'):
-                        embed.set_image(url=process_text(welcome.get('embed_image')))
+                        embed.set_image(url=process_embed_text(welcome.get('embed_image')))
                         
                     if welcome.get('embed_footer_text'):
-                        icon = process_text(welcome.get('embed_footer_icon')) or None
-                        embed.set_footer(text=process_text(welcome.get('embed_footer_text')), icon_url=icon)
+                        icon = process_footer_text(welcome.get('embed_footer_icon')) or None
+                        embed.set_footer(text=process_footer_text(welcome.get('embed_footer_text')), icon_url=icon)
 
                 if not embed and not content:
                     pass # Nothing to send
