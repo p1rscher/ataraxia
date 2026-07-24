@@ -1,5 +1,6 @@
 # core/database_pg.py - PostgreSQL Version
 import asyncpg
+import json
 import os
 import logging
 from datetime import datetime, timezone, timedelta
@@ -557,6 +558,24 @@ async def init_db():
                 embed_key TEXT NOT NULL,
                 color INTEGER NOT NULL,
                 PRIMARY KEY (guild_id, embed_key)
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS traffic_embed_configs (
+                guild_id BIGINT NOT NULL,
+                event_key TEXT NOT NULL,
+                title TEXT,
+                description TEXT,
+                author_name TEXT,
+                author_icon TEXT,
+                footer_text TEXT,
+                footer_icon TEXT,
+                thumbnail TEXT,
+                image TEXT,
+                fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+                timestamp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                PRIMARY KEY (guild_id, event_key)
             )
         """)
 
@@ -2754,6 +2773,66 @@ async def reset_embed_colors(guild_id: int):
         await conn.execute(
             "DELETE FROM embed_color_overrides WHERE guild_id = $1",
             guild_id,
+        )
+
+
+TRAFFIC_EMBED_EVENTS = {'join', 'leave', 'boost'}
+
+
+async def get_traffic_embed_config(guild_id: int, event: str) -> Optional[dict]:
+    """Return the custom configuration for one traffic event."""
+    if event not in TRAFFIC_EMBED_EVENTS:
+        raise ValueError(f"Unsupported traffic embed event: {event}")
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM traffic_embed_configs WHERE guild_id = $1 AND event_key = $2",
+            guild_id,
+            event,
+        )
+    return dict(row) if row else None
+
+
+async def set_traffic_embed_config(guild_id: int, event: str, **values):
+    """Upsert only the supplied fields of one traffic embed configuration."""
+    if event not in TRAFFIC_EMBED_EVENTS:
+        raise ValueError(f"Unsupported traffic embed event: {event}")
+    allowed = {
+        'title', 'description', 'author_name', 'author_icon',
+        'footer_text', 'footer_icon', 'thumbnail', 'image',
+        'fields', 'timestamp_enabled',
+    }
+    values = {key: value for key, value in values.items() if key in allowed}
+    if not values:
+        return
+    if 'fields' in values:
+        values['fields'] = json.dumps(values['fields'])
+
+    columns = ['guild_id', 'event_key', *values.keys()]
+    placeholders = [
+        f"${index}::jsonb" if column == 'fields' else f"${index}"
+        for index, column in enumerate(columns, start=1)
+    ]
+    assignments = ', '.join(
+        f"{column} = EXCLUDED.{column}" for column in values
+    )
+    query = (
+        f"INSERT INTO traffic_embed_configs ({', '.join(columns)}) "
+        f"VALUES ({', '.join(placeholders)}) "
+        f"ON CONFLICT (guild_id, event_key) DO UPDATE SET {assignments}"
+    )
+    async with _pool.acquire() as conn:
+        await conn.execute(query, guild_id, event, *values.values())
+
+
+async def reset_traffic_embed_config(guild_id: int, event: str):
+    """Restore one traffic embed to its built-in defaults."""
+    if event not in TRAFFIC_EMBED_EVENTS:
+        raise ValueError(f"Unsupported traffic embed event: {event}")
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM traffic_embed_configs WHERE guild_id = $1 AND event_key = $2",
+            guild_id,
+            event,
         )
 
 

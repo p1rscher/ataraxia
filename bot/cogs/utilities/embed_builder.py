@@ -1,9 +1,10 @@
 import discord
+import inspect
 from discord.ext import commands
 from discord import app_commands
 from discord.ext import commands
 import logging
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ class BasicInfoModal(discord.ui.Modal, title='Edit Basic Info'):
         else:
             embed.color = None
         
-        await interaction.response.edit_message(embed=embed, view=self.builder_view)
+        await self.builder_view.edit_preview(interaction)
 
 class AuthorFooterModal(discord.ui.Modal, title='Edit Author & Footer'):
     author_name = discord.ui.TextInput(
@@ -99,7 +100,7 @@ class AuthorFooterModal(discord.ui.Modal, title='Edit Author & Footer'):
         elif f_t:
             embed.set_footer(text=f_t, icon_url=self.footer_icon.value if self.footer_icon.value else None)
             
-        await interaction.response.edit_message(embed=embed, view=self.builder_view)
+        await self.builder_view.edit_preview(interaction)
 
 class ImagesModal(discord.ui.Modal, title='Edit Images'):
     thumbnail_url = discord.ui.TextInput(
@@ -133,7 +134,7 @@ class ImagesModal(discord.ui.Modal, title='Edit Images'):
         elif i_u:
             embed.set_image(url=i_u)
             
-        await interaction.response.edit_message(embed=embed, view=self.builder_view)
+        await self.builder_view.edit_preview(interaction)
 
 
 class AddFieldModal(discord.ui.Modal, title='Add Field'):
@@ -155,22 +156,44 @@ class AddFieldModal(discord.ui.Modal, title='Add Field'):
         embed = self.builder_view.preview_embed
         inline_val = self.inline.value.lower() == 'true'
         embed.add_field(name=self.field_name.value, value=self.field_value.value, inline=inline_val)
-        await interaction.response.edit_message(embed=embed, view=self.builder_view)
+        await self.builder_view.edit_preview(interaction)
 
 
 class EmbedBuilderView(discord.ui.View):
     def __init__(self, target_channel: discord.TextChannel | discord.Thread, 
                  target_message: Optional[discord.Message] = None,
-                 initial_embed: Optional[discord.Embed] = None):
+                 initial_embed: Optional[discord.Embed] = None,
+                 save_callback: Optional[Callable[[discord.Embed], Awaitable[None]]] = None,
+                 preview_renderer: Optional[Callable[[discord.Embed], Awaitable[discord.Embed] | discord.Embed]] = None):
         super().__init__(timeout=900)  # 15 minutes timeout
         self.target_channel = target_channel
         self.target_message = target_message
+        self.save_callback = save_callback
+        self.preview_renderer = preview_renderer
         self.preview_embed = initial_embed or discord.Embed(title="New Embed")
         
         # Adjust send button label depending on create/edit
         if target_message:
             self.send_button.label = "💾 Save Edits"
             self.send_button.style = discord.ButtonStyle.green
+        elif save_callback:
+            self.send_button.label = "💾 Save Configuration"
+            self.send_button.style = discord.ButtonStyle.green
+        if self.preview_embed.timestamp:
+            self.btn_timestamp.label = "🕒 Remove Timestamp"
+
+    async def get_preview_embed(self) -> discord.Embed:
+        """Return a rendered copy while keeping placeholders in the editable embed."""
+        preview = discord.Embed.from_dict(self.preview_embed.to_dict())
+        if self.preview_renderer:
+            rendered = self.preview_renderer(preview)
+            if inspect.isawaitable(rendered):
+                rendered = await rendered
+            preview = rendered
+        return preview
+
+    async def edit_preview(self, interaction: commands.Context):
+        await interaction.response.edit_message(embed=await self.get_preview_embed(), view=self)
 
     @discord.ui.button(label="📝 Basic Info", style=discord.ButtonStyle.secondary, row=0)
     async def btn_basic(self, interaction: commands.Context, button: discord.ui.Button):
@@ -194,7 +217,17 @@ class EmbedBuilderView(discord.ui.View):
     @discord.ui.button(label="🗑️ Clear Fields", style=discord.ButtonStyle.danger, row=1)
     async def btn_clear_fields(self, interaction: commands.Context, button: discord.ui.Button):
         self.preview_embed.clear_fields()
-        await interaction.response.edit_message(embed=self.preview_embed, view=self)
+        await self.edit_preview(interaction)
+
+    @discord.ui.button(label="🕒 Toggle Timestamp", style=discord.ButtonStyle.secondary, row=2)
+    async def btn_timestamp(self, interaction: commands.Context, button: discord.ui.Button):
+        if self.preview_embed.timestamp:
+            self.preview_embed.timestamp = None
+            button.label = "🕒 Add Timestamp"
+        else:
+            self.preview_embed.timestamp = discord.utils.utcnow()
+            button.label = "🕒 Remove Timestamp"
+        await self.edit_preview(interaction)
 
     @discord.ui.button(label="✅ Send", style=discord.ButtonStyle.success, row=2)
     async def send_button(self, interaction: commands.Context, button: discord.ui.Button):
@@ -208,7 +241,14 @@ class EmbedBuilderView(discord.ui.View):
             ]):
                 return await interaction.send("❌ This embed is totally empty, please add a title or description.", ephemeral=True)
 
-            if self.target_message:
+            if self.save_callback:
+                await self.save_callback(self.preview_embed)
+                await interaction.response.edit_message(
+                    content="✅ Embed configuration saved successfully!",
+                    embed=await self.get_preview_embed(),
+                    view=None,
+                )
+            elif self.target_message:
                 await self.target_message.edit(embed=self.preview_embed)
                 await interaction.response.edit_message(content="✅ Embed updated successfully!", embed=self.preview_embed, view=None)
             else:

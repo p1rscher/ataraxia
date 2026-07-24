@@ -27,14 +27,18 @@ class WelcomeChannelSelect(discord.ui.ChannelSelect):
     def __init__(self, view_obj):
         self.view_obj = view_obj
         super().__init__(
-            placeholder="Select a channel to post the welcome message...",
+            placeholder=(
+                "Select a channel for this traffic event..."
+                if view_obj.traffic_event
+                else "Select a channel to post the welcome message..."
+            ),
             channel_types=[discord.ChannelType.text],
             min_values=1, max_values=1
         )
         
     async def callback(self, interaction: commands.Context):
         ch = self.values[0]
-        await db.update_welcome_message(interaction.guild.id, channel_id=ch.id)
+        await self.view_obj.set_target_channel(ch.id)
         await self.view_obj.refresh(interaction)
 
 
@@ -44,19 +48,23 @@ class MainTextModal(discord.ui.Modal, title="Edit Welcome Text"):
     p_desc = discord.ui.TextInput(label="Embed Description", style=discord.TextStyle.paragraph, required=False, max_length=4000)
 
     def __init__(self, view_obj):
-        super().__init__()
+        super().__init__(title=view_obj.modal_title("Edit Text"))
         self.view_obj = view_obj
         p = view_obj.settings
+        if view_obj.traffic_event:
+            self.p_content.label = "Optional Message Text"
+            self.p_content.placeholder = "Optional text outside the embed"
+            self.p_title.label = "Embed Title"
+            self.p_desc.label = "Embed Description"
         self.p_content.default = p.get('message') or ""
         self.p_title.default = p.get('embed_title') or ""
         self.p_desc.default = p.get('embed_description') or ""
 
     async def on_submit(self, interaction: commands.Context):
-        await db.update_welcome_message(
-            interaction.guild.id,
+        await self.view_obj.update_settings(
             message=str(self.p_content).strip() or None,
             embed_title=str(self.p_title).strip() or None,
-            embed_description=str(self.p_desc).strip() or None
+            embed_description=str(self.p_desc).strip() or None,
         )
         await self.view_obj.refresh(interaction)
 
@@ -65,15 +73,14 @@ class ImagesModal(discord.ui.Modal, title="Edit Welcome Images"):
     p_img = discord.ui.TextInput(label="Large Image URL", required=False, placeholder="https://...")
 
     def __init__(self, view_obj):
-        super().__init__()
+        super().__init__(title=view_obj.modal_title("Edit Images"))
         self.view_obj = view_obj
         p = view_obj.settings
         self.p_thumb.default = p.get('embed_thumbnail') or ""
         self.p_img.default = p.get('embed_image') or ""
 
     async def on_submit(self, interaction: commands.Context):
-        await db.update_welcome_message(
-            interaction.guild.id,
+        await self.view_obj.update_settings(
             embed_thumbnail=str(self.p_thumb).strip() or None,
             embed_image=str(self.p_img).strip() or None
         )
@@ -86,7 +93,7 @@ class AuthorFooterModal(discord.ui.Modal, title="Author & Footer"):
     p_ficon = discord.ui.TextInput(label="Footer Icon URL", required=False, placeholder="https://... or {server.icon}")
 
     def __init__(self, view_obj):
-        super().__init__()
+        super().__init__(title=view_obj.modal_title("Edit Author & Footer"))
         self.view_obj = view_obj
         p = view_obj.settings
         self.p_aname.default = p.get('embed_author_name') or ""
@@ -95,8 +102,7 @@ class AuthorFooterModal(discord.ui.Modal, title="Author & Footer"):
         self.p_ficon.default = p.get('embed_footer_icon') or ""
 
     async def on_submit(self, interaction: commands.Context):
-        await db.update_welcome_message(
-            interaction.guild.id,
+        await self.view_obj.update_settings(
             embed_author_name=str(self.p_aname).strip() or None,
             embed_author_icon=str(self.p_aicon).strip() or None,
             embed_footer_text=str(self.p_ftext).strip() or None,
@@ -105,37 +111,146 @@ class AuthorFooterModal(discord.ui.Modal, title="Author & Footer"):
         await self.view_obj.refresh(interaction)
 
 class WelcomeDashboardView(discord.ui.View):
-    def __init__(self, cog, interaction):
+    def __init__(self, cog, interaction, traffic_event: str | None = None):
         super().__init__(timeout=600)
         self.cog = cog
         self.orig_interaction = interaction
+        self.traffic_event = traffic_event
         self.settings = None
         self.preview_message = None
 
+        if traffic_event:
+            self.btn_channel.label = "Set Traffic Channel"
+            self.btn_text.label = "Edit Traffic Text"
+            self.btn_images.label = "Edit Traffic Images"
+            self.btn_author_footer.label = "Edit Traffic Author & Footer"
+            self.btn_clear.label = "Reset Traffic Embed"
+
+    def traffic_label(self) -> str:
+        return {
+            'join': 'Member Join',
+            'leave': 'Member Leave',
+            'boost': 'Server Boost',
+        }.get(self.traffic_event, 'Traffic')
+
+    def modal_title(self, action: str) -> str:
+        if self.traffic_event:
+            return f"{self.traffic_label()} • {action}"
+        return f"{action} Welcome"
+
+    async def embed_color(self) -> discord.Color:
+        """Return this dashboard's color without borrowing Welcome's color."""
+        guild_id = self.orig_interaction.guild.id
+        if self.traffic_event:
+            return await get_embed_color(
+                guild_id,
+                f"traffic_{self.traffic_event}",
+                "color_primary",
+            )
+        return await get_embed_color(guild_id, "welcome_message", "color_welcome")
+
     async def fetch_state(self):
-        self.settings = await db.get_or_create_welcome_message(self.orig_interaction.guild.id)
+        guild_id = self.orig_interaction.guild.id
+        if not self.traffic_event:
+            self.settings = await db.get_or_create_welcome_message(guild_id)
+            return
+
+        config = await db.get_traffic_embed_config(guild_id, self.traffic_event) or {}
+        channel_id = await db.get_traffic_event_channel_id(guild_id, self.traffic_event)
+        if channel_id is None:
+            channel_id = await db.get_traffic_log_channel_id(guild_id)
+
+        self.settings = {
+            'channel_id': channel_id,
+            'message': None,
+            'embed_title': config.get('title'),
+            'embed_description': config.get('description'),
+            'embed_thumbnail': config.get('thumbnail'),
+            'embed_image': config.get('image'),
+            'embed_author_name': config.get('author_name'),
+            'embed_author_icon': config.get('author_icon'),
+            'embed_footer_text': config.get('footer_text'),
+            'embed_footer_icon': config.get('footer_icon'),
+        }
+
+        if not config:
+            if self.traffic_event == 'join':
+                self.settings['embed_title'] = '{user.name} joined the server'
+            elif self.traffic_event == 'leave':
+                self.settings['embed_title'] = '{user.name} left the server'
+            else:
+                self.settings['embed_title'] = '{user.name} boosted the server'
+            self.settings['embed_thumbnail'] = '{user.avatar}'
+            self.settings['embed_footer_text'] = '{server} • {member_count} members'
+            self.settings['embed_footer_icon'] = '{server.icon}'
+
+    async def set_target_channel(self, channel_id: int):
+        guild_id = self.orig_interaction.guild.id
+        if self.traffic_event:
+            await db.set_traffic_event_channel(guild_id, self.traffic_event, channel_id)
+        else:
+            await db.update_welcome_message(guild_id, channel_id=channel_id)
+
+    async def update_settings(self, **values):
+        guild_id = self.orig_interaction.guild.id
+        if not self.traffic_event:
+            await db.update_welcome_message(guild_id, **values)
+            return
+
+        mapping = {
+            'embed_title': 'title',
+            'embed_description': 'description',
+            'embed_thumbnail': 'thumbnail',
+            'embed_image': 'image',
+            'embed_author_name': 'author_name',
+            'embed_author_icon': 'author_icon',
+            'embed_footer_text': 'footer_text',
+            'embed_footer_icon': 'footer_icon',
+        }
+        traffic_values = {
+            mapping[key]: value
+            for key, value in values.items()
+            if key in mapping
+        }
+        if traffic_values:
+            await db.set_traffic_embed_config(
+                guild_id,
+                self.traffic_event,
+                **traffic_values,
+            )
 
     async def _build_preview(self, interaction: commands.Context, preview_mode=False):
         welcome = self.settings
         member = getattr(interaction, 'user', getattr(interaction, 'author', None))
         guild = interaction.guild
+
+        extra_values = {}
+        if self.traffic_event:
+            extra_values = {
+                'account_created': f"<t:{int(member.created_at.timestamp())}:f>",
+                'joined_at': (
+                    f"<t:{int(member.joined_at.timestamp())}:f>"
+                    if member.joined_at else "Unknown"
+                ),
+                'event': self.traffic_event,
+            }
         
         def process_text(txt):
             if not txt or not preview_mode:
                 return txt or ""
-            return process_member_text(txt, member)
+            return process_member_text(txt, member, extra_values=extra_values)
 
         preview_time = discord.utils.utcnow()
 
         def process_embed_text(txt):
             if not txt or not preview_mode:
                 return txt or ""
-            return process_member_text(txt, member, event_time=preview_time)
+            return process_member_text(txt, member, event_time=preview_time, extra_values=extra_values)
 
         def process_footer_text(txt):
             if not txt or not preview_mode:
                 return txt or ""
-            return process_member_text(txt, member, event_time=preview_time, time_value="")
+            return process_member_text(txt, member, event_time=preview_time, time_value="", extra_values=extra_values)
 
         content = process_text(welcome.get('message'))
         
@@ -154,7 +269,7 @@ class WelcomeDashboardView(discord.ui.View):
             embed = discord.Embed(
                 title=process_embed_text(welcome.get('embed_title')) or None,
                 description=process_embed_text(welcome.get('embed_description')) or None,
-                color=await get_embed_color(guild.id, 'welcome_message', 'color_welcome'),
+                color=await self.embed_color(),
                 timestamp=preview_time if preview_mode and has_time_placeholder(*embed_values) else None,
             )
             
@@ -175,10 +290,22 @@ class WelcomeDashboardView(discord.ui.View):
         return content, embed
 
     async def _build_editor_embed(self) -> discord.Embed:
+        if self.traffic_event:
+            event_labels = {
+                'join': 'Member Join',
+                'leave': 'Member Leave',
+                'boost': 'Server Boost',
+            }
+            dashboard_title = f"📋 {event_labels.get(self.traffic_event, self.traffic_event.title())} Embed Dashboard"
+            dashboard_description = "Use the buttons below to customize this traffic embed layout."
+        else:
+            dashboard_title = "👋 Welcome Message Dashboard"
+            dashboard_description = "Use the buttons below to customize the welcome message layout."
+
         emb = discord.Embed(
-            title="👋 Welcome Message Dashboard",
-            description="Use the buttons below to customize the welcome message layout.",
-            color=0x5865F2
+            title=dashboard_title,
+            description=dashboard_description,
+            color=await self.embed_color()
         )
         
         ch_id = self.settings.get('channel_id')
@@ -232,7 +359,10 @@ class WelcomeDashboardView(discord.ui.View):
 
     @discord.ui.button(label="Clear Entire Message", style=discord.ButtonStyle.danger, row=2)
     async def btn_clear(self, interaction: commands.Context, btn: discord.ui.Button):
-        await db.remove_welcome_message(interaction.guild.id)
+        if self.traffic_event:
+            await db.reset_traffic_embed_config(interaction.guild.id, self.traffic_event)
+        else:
+            await db.remove_welcome_message(interaction.guild.id)
         await self.fetch_state()
         await self.refresh(interaction)
 

@@ -44,7 +44,7 @@ EMBED_COLOR_CHOICES = [
     app_commands.Choice(name="Voice joined log", value="voice_join"),
     app_commands.Choice(name="Voice left log", value="voice_leave"),
     app_commands.Choice(name="Voice switched log", value="voice_switch"),
-    app_commands.Choice(name="Global fallback (legacy)", value="global"),
+    app_commands.Choice(name="Global fallback only", value="global"),
 ]
 
 
@@ -83,12 +83,12 @@ class SettingsCog(commands.Cog):
     @color_group.command(name="set", description="Set a custom embed color for this server")
     @app_commands.describe(
         hex_color="Hex color code (e.g. #FF5733 or FF5733)",
-        type="The individual embed to customize (default: Global fallback)"
+        type="The individual embed or fallback color to customize (required)"
     )
     @app_commands.choices(type=EMBED_COLOR_CHOICES)
     @commands.has_permissions(administrator=True)
     @commands.guild_only()
-    async def color_set(self, ctx: commands.Context, hex_color: str, type: str = "global"):
+    async def color_set(self, ctx: commands.Context, hex_color: str, type: str):
         """Set a custom color"""
         if not ctx.author.guild_permissions.administrator:
             await ctx.send("❌ You need administrator permissions!", ephemeral=True)

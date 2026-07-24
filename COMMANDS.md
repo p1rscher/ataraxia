@@ -343,7 +343,7 @@ Calculate a math expression.
 ### `/settings color` - Individual Embed Colors
 
 **`/settings color set [hex_color] [type]`** 🟠
-Set the color of one concrete embed instead of changing an entire color group.
+Set the color of one concrete embed or the explicit global fallback. The `type` selection is required; no color is changed when it is omitted.
 - **Examples:**
   - `/settings color set #57F287 traffic_join`
   - `/settings color set #ED4245 traffic_leave`
@@ -378,6 +378,23 @@ The shared `User Traffic Logs` channel is optional. Dedicated channels can be co
 - `/log set` → `Traffic: Server Boosts`
 
 Use `/log clear` to let an event fall back to the shared traffic channel, or `/log disable` to disable only that event. `/log status` shows all four settings.
+
+### `/log embed` - Traffic-Embeds visuell anpassen
+
+Mit `/log embed` öffnet ein Administrator für **Member Join**, **Member Leave** oder **Server Boost** denselben visuellen Embed-Creator wie `/welcome dashboard`. Die Vorschau wird direkt aktualisiert, während die Buttons und Modals verwendet werden.
+
+- Titel
+- Beschreibung
+- Autor und Autor-Icon
+- Footer und Footer-Icon
+- Thumbnail
+- großes Bild
+- dieselben Text-Platzhalter wie im Welcome-Dashboard
+- `{time}` über die bestehende Timestamp-Logik
+
+Verfügbare Platzhalter umfassen `{user}`, `{user.name}`, `{user.avatar}`, `{server}`, `{server.icon}`, `{member_count}`, `{member_count_ext}`, `{time}`, `{account_created}`, `{joined_at}` und `{event}`.
+
+Mit `/log embed-reset` kann ein einzelnes Traffic-Embed auf die Standardkonfiguration zurückgesetzt werden. Die Farbe wird separat über `/settings color set` konfiguriert, damit die Traffic-Farbe nicht versehentlich die Welcome-Farbe übernimmt.
 
 ### `/log-config` - Logging Configuration
 

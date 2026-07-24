@@ -1,10 +1,13 @@
+import json
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ext import commands
 
 from core import database_pg as db
-from utils.embeds import get_guild_color
+from cogs.server_management.welcome import WelcomeDashboardView
+from utils.embeds import get_embed_color, get_guild_color, process_member_text
 
 
 LOG_TYPE_CHOICES = [
@@ -18,6 +21,12 @@ LOG_TYPE_CHOICES = [
     app_commands.Choice(name="Traffic: Member Leaves", value="traffic_leave"),
     app_commands.Choice(name="Traffic: Server Boosts", value="traffic_boost"),
     app_commands.Choice(name="Ticket Logs", value="ticket"),
+]
+
+TRAFFIC_EMBED_CHOICES = [
+    app_commands.Choice(name="Member joins", value="join"),
+    app_commands.Choice(name="Member leaves", value="leave"),
+    app_commands.Choice(name="Server boosts", value="boost"),
 ]
 
 
@@ -97,6 +106,208 @@ class LogConfigCog(commands.Cog):
             color=await get_guild_color(ctx.guild.id),
         )
         await ctx.send(embed=embed, ephemeral=True)
+
+    def _default_traffic_embed(self, event: str, color: discord.Color) -> discord.Embed:
+        if event == "join":
+            title = "{user.name} joined the server"
+            fields = [
+                ("User", "{user}", True),
+                ("Account creation", "{account_created}", True),
+                ("Member count", "{member_count}", True),
+            ]
+        elif event == "leave":
+            title = "{user.name} left the server"
+            fields = [
+                ("User", "{user}", True),
+                ("Joined date", "{joined_at}", True),
+                ("Member count", "{member_count}", True),
+            ]
+        else:
+            title = "{user.name} boosted the server"
+            fields = [
+                ("User", "{user}", True),
+                ("Member count", "{member_count}", True),
+            ]
+
+        embed = discord.Embed(
+            title=title,
+            description="",
+            color=color,
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.set_thumbnail(url="{user.avatar}")
+        embed.set_footer(text="{server} • {member_count} members", icon_url="{server.icon}")
+        for name, value, inline in fields:
+            embed.add_field(name=name, value=value, inline=inline)
+        return embed
+
+    async def _traffic_embed_from_config(self, guild_id: int, event: str) -> discord.Embed:
+        embed = self._default_traffic_embed(
+            event,
+            await get_embed_color(guild_id, f"traffic_{event}"),
+        )
+        config = await db.get_traffic_embed_config(guild_id, event)
+        if not config:
+            return embed
+
+        embed.title = config.get("title")
+        embed.description = config.get("description")
+        embed.timestamp = discord.utils.utcnow() if config.get("timestamp_enabled", True) else None
+
+        if config.get("author_name"):
+            embed.set_author(name=config["author_name"], icon_url=config.get("author_icon"))
+        else:
+            embed.remove_author()
+        if config.get("footer_text"):
+            embed.set_footer(text=config["footer_text"], icon_url=config.get("footer_icon"))
+        else:
+            embed.remove_footer()
+        if config.get("thumbnail"):
+            embed.set_thumbnail(url=config["thumbnail"])
+        else:
+            embed.set_thumbnail(url=None)
+        if config.get("image"):
+            embed.set_image(url=config["image"])
+        else:
+            embed.set_image(url=None)
+
+        embed.clear_fields()
+        fields = config.get("fields") or []
+        if isinstance(fields, str):
+            try:
+                fields = json.loads(fields)
+            except (TypeError, json.JSONDecodeError):
+                fields = []
+        for field in fields[:25]:
+            if isinstance(field, dict) and field.get("name") and field.get("value"):
+                embed.add_field(
+                    name=field["name"],
+                    value=field["value"],
+                    inline=bool(field.get("inline", False)),
+                )
+        return embed
+
+    async def _save_traffic_embed(self, guild_id: int, event: str, embed: discord.Embed):
+        payload = embed.to_dict()
+        author = payload.get("author") or {}
+        footer = payload.get("footer") or {}
+        thumbnail = payload.get("thumbnail") or {}
+        image = payload.get("image") or {}
+        await db.set_traffic_embed_config(
+            guild_id,
+            event,
+            title=payload.get("title"),
+            description=payload.get("description"),
+            author_name=author.get("name"),
+            author_icon=author.get("icon_url"),
+            footer_text=footer.get("text"),
+            footer_icon=footer.get("icon_url"),
+            thumbnail=thumbnail.get("url"),
+            image=image.get("url"),
+            fields=payload.get("fields", []),
+            timestamp_enabled=embed.timestamp is not None,
+        )
+        if embed.color:
+            await db.set_embed_color(guild_id, f"traffic_{event}", embed.color.value)
+
+    def _render_traffic_preview(
+        self,
+        embed: discord.Embed,
+        event: str,
+        member: discord.Member,
+    ) -> discord.Embed:
+        """Render placeholders for the visual editor without changing saved templates."""
+        data = embed.to_dict()
+        now = embed.timestamp or discord.utils.utcnow()
+        extra_values = {
+            "account_created": f"<t:{int(member.created_at.timestamp())}:f>",
+            "joined_at": (
+                f"<t:{int(member.joined_at.timestamp())}:f>"
+                if member.joined_at else "Unknown"
+            ),
+            "event": event,
+        }
+
+        def render(value: str | None, *, footer: bool = False) -> str | None:
+            if not value:
+                return None
+            return process_member_text(
+                value,
+                member,
+                event_time=now,
+                time_value="" if footer else None,
+                extra_values=extra_values,
+            ) or None
+
+        fields = list(data.get("fields", []))
+        preview = discord.Embed.from_dict(data)
+        preview.title = render(data.get("title"))
+        preview.description = render(data.get("description"))
+
+        author = data.get("author")
+        if author and author.get("name"):
+            preview.set_author(
+                name=render(author.get("name")) or " ",
+                icon_url=render(author.get("icon_url")),
+            )
+        else:
+            preview.remove_author()
+
+        footer = data.get("footer")
+        if footer and footer.get("text"):
+            preview.set_footer(
+                text=render(footer.get("text"), footer=True) or " ",
+                icon_url=render(footer.get("icon_url")),
+            )
+        else:
+            preview.remove_footer()
+
+        thumbnail = data.get("thumbnail")
+        preview.set_thumbnail(url=render(thumbnail.get("url")) if thumbnail else None)
+        image = data.get("image")
+        preview.set_image(url=render(image.get("url")) if image else None)
+
+        preview.clear_fields()
+        for field in fields[:25]:
+            preview.add_field(
+                name=render(field.get("name")) or "Field",
+                value=(render(field.get("value")) or "-")[:1024],
+                inline=bool(field.get("inline", False)),
+            )
+        return preview
+
+    @log_group.command(name="embed", description="Open the visual editor for a traffic embed")
+    @app_commands.choices(event=TRAFFIC_EMBED_CHOICES)
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def configure_traffic_embed(self, ctx: commands.Context, event: app_commands.Choice[str]):
+        if not await self._require_admin(ctx):
+            return
+        editor = WelcomeDashboardView(self, ctx, traffic_event=event.value)
+        await editor.fetch_state()
+        await ctx.send(
+            embed=await editor._build_editor_embed(),
+            view=editor,
+            ephemeral=True,
+        )
+        content, preview_embed = await editor._build_preview(ctx, preview_mode=True)
+        editor.preview_message = await ctx.send(
+            content=content or "**Live Preview:**",
+            embed=preview_embed,
+            ephemeral=True,
+        )
+
+    @log_group.command(name="embed-reset", description="Reset one traffic embed to defaults")
+    @app_commands.describe(event="Which traffic embed to reset")
+    @app_commands.choices(event=TRAFFIC_EMBED_CHOICES)
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def reset_traffic_embed(self, ctx: commands.Context, event: app_commands.Choice[str]):
+        if not await self._require_admin(ctx):
+            return
+        await db.reset_traffic_embed_config(ctx.guild.id, event.value)
+        await db.reset_embed_color(ctx.guild.id, f"traffic_{event.value}")
+        await ctx.send(f"✅ The **{event.name}** embed was reset to defaults.", ephemeral=True)
 
     @log_group.command(name="clear", description="Clear a configured log channel")
     @app_commands.describe(type="Which log type to clear")

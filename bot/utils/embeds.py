@@ -2,6 +2,7 @@
 import discord
 import datetime
 import asyncio
+import json
 import logging
 from typing import Optional
 from core import database_pg as db
@@ -64,11 +65,12 @@ def member_template_values(
     member: discord.Member,
     *,
     event_time: Optional[datetime.datetime] = None,
+    extra_values: Optional[dict[str, str]] = None,
 ) -> dict[str, str]:
     """Return values for member-message placeholders."""
     event_time = event_time or discord.utils.utcnow()
     count = human_member_count(member.guild)
-    return {
+    values = {
         "{user}": member.mention,
         "{user.name}": str(member),
         "{user.avatar}": member.display_avatar.url,
@@ -78,6 +80,9 @@ def member_template_values(
         "{member_count_ext}": ordinal(count),
         "{time}": f"<t:{int(event_time.timestamp())}:F>",
     }
+    if extra_values:
+        values.update({f"{{{key}}}": str(value) for key, value in extra_values.items()})
+    return values
 
 
 def has_time_placeholder(*values: Optional[str]) -> bool:
@@ -91,11 +96,16 @@ def process_member_text(
     *,
     event_time: Optional[datetime.datetime] = None,
     time_value: Optional[str] = None,
+    extra_values: Optional[dict[str, str]] = None,
 ) -> str:
     """Replace supported member-message placeholders in a text value."""
     if not text:
         return ""
-    values = member_template_values(member, event_time=event_time)
+    values = member_template_values(
+        member,
+        event_time=event_time,
+        extra_values=extra_values,
+    )
     if time_value is not None:
         values["{time}"] = time_value
     for placeholder, value in values.items():
@@ -127,43 +137,110 @@ async def send_member_traffic_embed(
         return False
 
     now = timestamp or discord.utils.utcnow()
-    member_count = human_member_count(member.guild)
-    if event == 'join':
-        title = f"{member.display_name} joined the server"
-        embed = discord.Embed(
-            title=title,
-            color=await get_embed_color(member.guild.id, 'traffic_join'),
-            timestamp=now,
-        )
-        embed.add_field(name="User", value=member.mention, inline=True)
-        embed.add_field(name="Account creation", value=f"<t:{int(member.created_at.timestamp())}:f> (<t:{int(member.created_at.timestamp())}:R>)", inline=True)
-        embed.add_field(name="Member count", value=str(member_count), inline=True)
-    elif event == 'leave':
-        title = f"{member.display_name} left the server"
-        embed = discord.Embed(
-            title=title,
-            color=await get_embed_color(member.guild.id, 'traffic_leave'),
-            timestamp=now,
-        )
-        embed.add_field(name="User", value=member.mention, inline=True)
-        joined = f"<t:{int(member.joined_at.timestamp())}:f> (<t:{int(member.joined_at.timestamp())}:R>)" if member.joined_at else "Unknown"
-        embed.add_field(name="Joined date", value=joined, inline=True)
-        embed.add_field(name="Member count", value=str(member_count), inline=True)
-    else:
-        title = f"{member.display_name} boosted the server"
-        embed = discord.Embed(
-            title=title,
-            color=await get_embed_color(member.guild.id, 'traffic_boost'),
-            timestamp=now,
-        )
-        embed.add_field(name="User", value=member.mention, inline=True)
-        embed.add_field(name="Member count", value=str(member_count), inline=True)
+    config = await db.get_traffic_embed_config(member.guild.id, event) or {}
 
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.set_footer(
-        text=f"{member.guild.name} • {member_count} members",
-        icon_url=member.guild.icon.url if member.guild.icon else None,
+    if event == 'join':
+        default_title = "{user.name} joined the server"
+        default_fields = [
+            {"name": "User", "value": "{user}", "inline": True},
+            {"name": "Account creation", "value": "{account_created}", "inline": True},
+            {"name": "Member count", "value": "{member_count}", "inline": True},
+        ]
+    elif event == 'leave':
+        default_title = "{user.name} left the server"
+        default_fields = [
+            {"name": "User", "value": "{user}", "inline": True},
+            {"name": "Joined date", "value": "{joined_at}", "inline": True},
+            {"name": "Member count", "value": "{member_count}", "inline": True},
+        ]
+    else:
+        default_title = "{user.name} boosted the server"
+        default_fields = [
+            {"name": "User", "value": "{user}", "inline": True},
+            {"name": "Member count", "value": "{member_count}", "inline": True},
+        ]
+
+    default_config = {
+        'title': default_title,
+        'description': None,
+        'author_name': None,
+        'author_icon': None,
+        'footer_text': "{server} • {member_count} members",
+        'footer_icon': "{server.icon}",
+        'thumbnail': "{user.avatar}",
+        'image': None,
+        'fields': default_fields,
+        'timestamp_enabled': True,
+    }
+    default_config.update(config)
+    raw_fields = default_config.get('fields') or default_fields
+    if isinstance(raw_fields, str):
+        try:
+            raw_fields = json.loads(raw_fields)
+        except (TypeError, json.JSONDecodeError):
+            raw_fields = []
+
+    extra_values = {
+        'account_created': f"<t:{int(member.created_at.timestamp())}:f> (<t:{int(member.created_at.timestamp())}:R>)",
+        'joined_at': (
+            f"<t:{int(member.joined_at.timestamp())}:f> (<t:{int(member.joined_at.timestamp())}:R>)"
+            if member.joined_at else "Unknown"
+        ),
+        'event': event,
+    }
+
+    def render(value):
+        if not value:
+            return None
+        return process_member_text(
+            value,
+            member,
+            event_time=now,
+            extra_values=extra_values,
+        ) or None
+
+    footer_text = default_config.get('footer_text')
+    render_footer = lambda value: process_member_text(
+        value,
+        member,
+        event_time=now,
+        time_value="",
+        extra_values=extra_values,
+    ) or None
+
+    embed = discord.Embed(
+        title=render(default_config.get('title')),
+        description=render(default_config.get('description')),
+        color=await get_embed_color(member.guild.id, f'traffic_{event}'),
+        timestamp=(
+            now
+            if default_config.get('timestamp_enabled', True) or '{time}' in (footer_text or '')
+            else None
+        ),
     )
+    if default_config.get('author_name'):
+        embed.set_author(
+            name=render(default_config['author_name']) or " ",
+            icon_url=render(default_config.get('author_icon')),
+        )
+    if default_config.get('thumbnail'):
+        embed.set_thumbnail(url=render(default_config['thumbnail']))
+    if default_config.get('image'):
+        embed.set_image(url=render(default_config['image']))
+    if default_config.get('footer_text'):
+        embed.set_footer(
+            text=render_footer(default_config['footer_text']) or " ",
+            icon_url=render(default_config.get('footer_icon')),
+        )
+    for field in raw_fields[:25]:
+        if not isinstance(field, dict) or not field.get('name'):
+            continue
+        embed.add_field(
+            name=render(field['name']) or "Field",
+            value=(render(field.get('value')) or "-")[:1024],
+            inline=bool(field.get('inline', False)),
+        )
+
     await channel.send(embed=embed)
     return True
 
