@@ -321,6 +321,46 @@ async def init_db():
         """)
 
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_personality_settings (
+                guild_id BIGINT PRIMARY KEY,
+                enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                trigger_chance DOUBLE PRECISION NOT NULL DEFAULT 0.06,
+                language_mode TEXT NOT NULL DEFAULT 'auto',
+                reply_always BOOLEAN NOT NULL DEFAULT TRUE,
+                allow_profanity BOOLEAN NOT NULL DEFAULT FALSE,
+                trait_nice INTEGER NOT NULL DEFAULT 65,
+                trait_romantic INTEGER NOT NULL DEFAULT 15,
+                trait_funny INTEGER NOT NULL DEFAULT 45,
+                trait_chaotic INTEGER NOT NULL DEFAULT 25,
+                ai_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                ai_chance DOUBLE PRECISION NOT NULL DEFAULT 0.15,
+                ai_daily_limit INTEGER NOT NULL DEFAULT 20,
+                ai_daily_used INTEGER NOT NULL DEFAULT 0,
+                ai_daily_date DATE
+            )
+        """)
+
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS language_mode TEXT NOT NULL DEFAULT 'auto'"
+        )
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_personality_tokens (
+                guild_id BIGINT NOT NULL,
+                token_type TEXT NOT NULL,
+                token_value TEXT NOT NULL,
+                count BIGINT NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, token_type, token_value)
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chat_personality_tokens_lookup
+            ON chat_personality_tokens(guild_id, token_type, count DESC)
+        """)
+
+        await conn.execute("""
             ALTER TABLE trigger_embeds
             ADD COLUMN IF NOT EXISTS content TEXT
         """)
@@ -1693,6 +1733,206 @@ async def delete_trigger_embed(guild_id: int, trigger_word: str) -> bool:
             trigger_word,
         )
     return result == "DELETE 1"
+
+
+# ==================== CHAT PERSONALITY ====================
+
+CHAT_TOKEN_TYPES = {"word", "emoji", "gif", "sticker"}
+
+
+async def get_or_create_chat_personality_settings(guild_id: int) -> dict:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM chat_personality_settings WHERE guild_id = $1",
+            guild_id,
+        )
+        if not row:
+            await conn.execute(
+                "INSERT INTO chat_personality_settings (guild_id) VALUES ($1)",
+                guild_id,
+            )
+            row = await conn.fetchrow(
+                "SELECT * FROM chat_personality_settings WHERE guild_id = $1",
+                guild_id,
+            )
+    return dict(row) if row else {}
+
+
+async def update_chat_personality_settings(guild_id: int, **kwargs):
+    if not kwargs:
+        return
+
+    valid_keys = {
+        "enabled",
+        "trigger_chance",
+        "language_mode",
+        "reply_always",
+        "allow_profanity",
+        "trait_nice",
+        "trait_romantic",
+        "trait_funny",
+        "trait_chaotic",
+        "ai_enabled",
+        "ai_chance",
+        "ai_daily_limit",
+        "ai_daily_used",
+        "ai_daily_date",
+    }
+    updates = [(key, value) for key, value in kwargs.items() if key in valid_keys]
+    if not updates:
+        return
+
+    set_clauses = []
+    values = []
+    for index, (key, value) in enumerate(updates, start=1):
+        set_clauses.append(f"{key} = ${index}")
+        values.append(value)
+
+    values.append(guild_id)
+
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            f"UPDATE chat_personality_settings SET {', '.join(set_clauses)} WHERE guild_id = ${len(values)}",
+            *values,
+        )
+
+
+async def increment_chat_personality_token(
+    guild_id: int,
+    token_type: str,
+    token_value: str,
+    amount: int = 1,
+):
+    token_type = (token_type or "").strip().lower()
+    token_value = (token_value or "").strip()
+    if token_type not in CHAT_TOKEN_TYPES or not token_value or amount <= 0:
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO chat_personality_tokens (guild_id, token_type, token_value, count)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (guild_id, token_type, token_value)
+            DO UPDATE SET count = chat_personality_tokens.count + EXCLUDED.count
+            """,
+            guild_id,
+            token_type,
+            token_value,
+            amount,
+        )
+
+
+async def bulk_increment_chat_personality_tokens(
+    guild_id: int,
+    token_type: str,
+    tokens: list[tuple[str, int]],
+):
+    token_type = (token_type or "").strip().lower()
+    if token_type not in CHAT_TOKEN_TYPES or not tokens:
+        return
+
+    clean_entries = []
+    for token_value, amount in tokens:
+        value = (token_value or "").strip()
+        qty = int(amount or 0)
+        if value and qty > 0:
+            clean_entries.append((guild_id, token_type, value, qty))
+    if not clean_entries:
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.executemany(
+            """
+            INSERT INTO chat_personality_tokens (guild_id, token_type, token_value, count)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (guild_id, token_type, token_value)
+            DO UPDATE SET count = chat_personality_tokens.count + EXCLUDED.count
+            """,
+            clean_entries,
+        )
+
+
+async def get_chat_personality_top_tokens(
+    guild_id: int,
+    token_type: str,
+    limit: int = 30,
+) -> list[dict]:
+    token_type = (token_type or "").strip().lower()
+    if token_type not in CHAT_TOKEN_TYPES:
+        return []
+
+    safe_limit = max(1, min(int(limit), 200))
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT token_value, count
+            FROM chat_personality_tokens
+            WHERE guild_id = $1 AND token_type = $2
+            ORDER BY count DESC
+            LIMIT $3
+            """,
+            guild_id,
+            token_type,
+            safe_limit,
+        )
+    return [{"token_value": row["token_value"], "count": row["count"]} for row in rows]
+
+
+async def reset_chat_personality_learning(guild_id: int):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM chat_personality_tokens WHERE guild_id = $1",
+            guild_id,
+        )
+
+
+async def consume_chat_personality_ai_quota(guild_id: int) -> bool:
+    today = datetime.now(timezone.utc).date()
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT ai_daily_used, ai_daily_limit, ai_daily_date FROM chat_personality_settings WHERE guild_id = $1",
+            guild_id,
+        )
+        if not row:
+            await conn.execute(
+                "INSERT INTO chat_personality_settings (guild_id, ai_daily_date, ai_daily_used) VALUES ($1, $2, 0)",
+                guild_id,
+                today,
+            )
+            row = await conn.fetchrow(
+                "SELECT ai_daily_used, ai_daily_limit, ai_daily_date FROM chat_personality_settings WHERE guild_id = $1",
+                guild_id,
+            )
+
+        used = int(row["ai_daily_used"] or 0)
+        limit = max(0, int(row["ai_daily_limit"] or 0))
+        quota_date = row["ai_daily_date"]
+
+        if quota_date != today:
+            used = 0
+
+        if limit <= 0 or used >= limit:
+            if quota_date != today:
+                await conn.execute(
+                    "UPDATE chat_personality_settings SET ai_daily_date = $2, ai_daily_used = 0 WHERE guild_id = $1",
+                    guild_id,
+                    today,
+                )
+            return False
+
+        await conn.execute(
+            """
+            UPDATE chat_personality_settings
+            SET ai_daily_date = $2,
+                ai_daily_used = $3
+            WHERE guild_id = $1
+            """,
+            guild_id,
+            today,
+            used + 1,
+        )
+    return True
 
 
 # ==================== TEMP VOICE ====================

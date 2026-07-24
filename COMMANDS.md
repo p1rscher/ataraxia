@@ -479,6 +479,26 @@ Alle Embed-Editoren verwenden denselben Feld-Editor. Über **Edit Fields** könn
 
 Das Trigger-Wort muss als eigenes whitespace-getrenntes Token vorkommen. Dadurch löst `.partnership` nicht versehentlich bei `.partnerships` aus.
 
+### `/chatpersona` - Zufällige Chat-Persönlichkeit
+
+Der Bot kann auf Basis echter Nutzer-Nachrichten eine eigene Chat-Persönlichkeit lernen (Wörter, Emojis, GIF-Links, Sticker-Namen) und zufällig im Chat antworten.
+
+- Nachrichten kommen **nicht zeitgesteuert**, sondern bei neuen User-Nachrichten mit konfigurierbarer Zufallschance.
+- Wenn jemand auf eine Bot-Nachricht antwortet, kann über `replymode` eine Antwort mit 100% Wahrscheinlichkeit erzwungen werden.
+- Optional kann eine **stark limitierte AI-Veredelung** genutzt werden (mit täglichem Limit und eigener Chance), damit die meisten Antworten natürlich wirken, aber nicht zu "KI-mäßig".
+
+**Admin-Kommandos:**
+- `/chatpersona status` - aktuelle Einstellungen + gelernte Top-Wörter/Emojis anzeigen
+- `/chatpersona enable enabled:true|false` - Feature aktivieren/deaktivieren
+- `/chatpersona chance percent:1-100` - Zufallschance einstellen
+- `/chatpersona language mode:auto|default_en` - Sprachmodus: automatisch erkennen oder Englisch erzwingen
+- `/chatpersona traits nice:0-100 romantic:0-100 funny:0-100 chaotic:0-100` - Persönlichkeit steuern
+- `/chatpersona profanity enabled:true|false` - schlimme Wörter erlauben/verbieten
+- `/chatpersona ai enabled:true|false chance_percent:1-100 daily_limit:1-500` - begrenzte AI konfigurieren
+- `/chatpersona replymode enabled:true|false` - 100%-Antwort bei Replies auf Bot-Nachrichten
+- `/chatpersona resetlearning confirm:RESET` - gelernte Daten zurücksetzen
+- `/chatpersona test` - Vorschau einer generierten Nachricht
+
 ### `/steal` - Copy a Custom Emoji or Sticker
 
 **`/steal [message_id] [name]`** 🟠
