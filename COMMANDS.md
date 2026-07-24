@@ -402,6 +402,16 @@ View admin statistics (command usage, top users, etc.).
 
 ## 🔧 Utility
 
+### `/steal` - Copy a Custom Emoji or Sticker
+
+**`/steal [message_id] [name]`** 🟠
+Copy a custom Discord emoji or sticker from a message in the current channel to the server.
+- **Parameters:**
+  - `message_id` - ID of a message containing exactly one custom emoji or sticker
+  - `name` - Optional new name for the copied emoji or sticker
+- **Example:** `/steal 123456789012345678 party_time`
+- **Bot permission:** Requires "Create Expressions" or "Manage Expressions"
+
 ### `/say` - Make Bot Say
 
 **`/say [message] [embed]`** 🟠
