@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 import logging
 from core import database_pg as db
-from utils.embeds import get_guild_color
+from utils.embeds import get_embed_color
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +72,9 @@ class VerificationCog(commands.Cog):
             try:
                 embed_color = discord.Color.from_str(hex_color)
             except ValueError:
-                embed_color = await get_guild_color(ctx.guild.id, 'color_verification')
+                embed_color = await get_embed_color(ctx.guild.id, 'verification_message', 'color_verification')
         else:
-            embed_color = await get_guild_color(ctx.guild.id, 'color_verification')
+            embed_color = await get_embed_color(ctx.guild.id, 'verification_message', 'color_verification')
 
         # Create Embed
         embed = discord.Embed(

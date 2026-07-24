@@ -4,7 +4,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ext import commands
 import logging
-from utils.embeds import get_guild_color
+from utils.embeds import get_embed_color
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class CountingCog(commands.Cog):
             embed = discord.Embed(
                 title="✅ Counting Channel Setup",
                 description=f"Counting channel has been set to {channel.mention}\n\nStart counting from **1**!",
-                color=await get_guild_color(interaction.guild.id, 'color_counting')
+                color=await get_embed_color(interaction.guild.id, 'counting_message', 'color_counting')
             )
             await interaction.send(embed=embed)
             
@@ -48,7 +48,7 @@ class CountingCog(commands.Cog):
             embed = discord.Embed(
                 title="✅ Counting Channel Removed",
                 description="The counting channel has been removed.",
-                color=await get_guild_color(interaction.guild.id, 'color_counting')
+                color=await get_embed_color(interaction.guild.id, 'counting_message', 'color_counting')
             )
             await interaction.send(embed=embed)
             
@@ -73,7 +73,7 @@ class CountingCog(commands.Cog):
             
             embed = discord.Embed(
                 title="🔢 Counting Status",
-                color=await get_guild_color(interaction.guild.id, 'color_counting')
+                color=await get_embed_color(interaction.guild.id, 'counting_message', 'color_counting')
             )
             
             if channel:
@@ -105,7 +105,7 @@ class CountingCog(commands.Cog):
             embed = discord.Embed(
                 title="✅ Counting Reset",
                 description="The counting has been reset to 0. Start counting from **1** again!",
-                color=await get_guild_color(interaction.guild.id, 'color_counting')
+                color=await get_embed_color(interaction.guild.id, 'counting_message', 'color_counting')
             )
             await interaction.send(embed=embed)
             
@@ -127,7 +127,7 @@ class CountingCog(commands.Cog):
             embed = discord.Embed(
                 title="🏆 Counting Leaderboard",
                 description="Top 10 counters in this server",
-                color=await get_guild_color(interaction.guild.id, 'color_counting')
+                color=await get_embed_color(interaction.guild.id, 'counting_message', 'color_counting')
             )
             
             for idx, (user_id, count) in enumerate(leaderboard, start=1):
@@ -180,7 +180,7 @@ class CountingCog(commands.Cog):
                     embed = discord.Embed(
                         title="🎉 New Milestone!",
                         description=f"**{result.current_number}** - Well done!",
-                        color=await get_guild_color(message.guild.id, 'color_counting')
+                        color=await get_embed_color(message.guild.id, 'counting_message', 'color_counting')
                     )
                     await message.channel.send(embed=embed)
                 return

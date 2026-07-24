@@ -3,6 +3,7 @@ import discord
 import datetime
 import asyncio
 import logging
+from typing import Optional
 from core import database_pg as db
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,95 @@ async def get_guild_color(guild_id: int, color_type: str = 'color_primary') -> d
         
     # 3. Otherwise use the default for the requested type
     return discord.Color(current_val)
+
+
+async def get_embed_color(
+    guild_id: int,
+    embed_key: str,
+    fallback_type: str = 'color_primary',
+) -> discord.Color:
+    """Get the color for one concrete embed with legacy fallback support."""
+    override = await db.get_embed_color_override(guild_id, embed_key)
+    if override is not None:
+        return discord.Color(override)
+    return await get_guild_color(guild_id, fallback_type)
+
+
+def ordinal(number: Optional[int]) -> str:
+    """Format a member count as an English ordinal (31st, 22nd, 13th)."""
+    if number is None:
+        return "Unknown"
+    number = int(number)
+    if 10 <= number % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+    return f"{number}{suffix}"
+
+
+async def send_member_traffic_embed(
+    member: discord.Member,
+    event: str,
+    *,
+    timestamp: Optional[datetime.datetime] = None,
+) -> bool:
+    """Send a join, leave, or boost embed to the shared traffic-log channel."""
+    if event not in {'join', 'leave', 'boost'}:
+        raise ValueError(f"Unsupported traffic event: {event}")
+
+    # ``None`` means use the shared legacy traffic channel, while ``0`` means
+    # this event was explicitly disabled by an administrator.
+    event_channel_id = await db.get_traffic_event_channel_id(member.guild.id, event)
+    if event_channel_id == 0:
+        return False
+    channel_id = event_channel_id or await db.get_traffic_log_channel_id(member.guild.id)
+    if not channel_id:
+        return False
+
+    channel = member.guild.get_channel(channel_id)
+    if not isinstance(channel, discord.TextChannel):
+        return False
+
+    now = timestamp or discord.utils.utcnow()
+    member_count = ordinal(member.guild.member_count)
+    if event == 'join':
+        title = f"{member.display_name} joined the server"
+        embed = discord.Embed(
+            title=title,
+            color=await get_embed_color(member.guild.id, 'traffic_join'),
+            timestamp=now,
+        )
+        embed.add_field(name="User", value=member.mention, inline=True)
+        embed.add_field(name="Account creation", value=f"<t:{int(member.created_at.timestamp())}:f> (<t:{int(member.created_at.timestamp())}:R>)", inline=True)
+        embed.add_field(name="Member count", value=member_count, inline=True)
+    elif event == 'leave':
+        title = f"{member.display_name} left the server"
+        embed = discord.Embed(
+            title=title,
+            color=await get_embed_color(member.guild.id, 'traffic_leave'),
+            timestamp=now,
+        )
+        embed.add_field(name="User", value=member.mention, inline=True)
+        joined = f"<t:{int(member.joined_at.timestamp())}:f> (<t:{int(member.joined_at.timestamp())}:R>)" if member.joined_at else "Unknown"
+        embed.add_field(name="Joined date", value=joined, inline=True)
+        embed.add_field(name="Member count", value=member_count, inline=True)
+    else:
+        title = f"{member.display_name} boosted the server"
+        embed = discord.Embed(
+            title=title,
+            color=await get_embed_color(member.guild.id, 'traffic_boost'),
+            timestamp=now,
+        )
+        embed.add_field(name="User", value=member.mention, inline=True)
+        embed.add_field(name="Member count", value=member_count, inline=True)
+
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.set_footer(
+        text=f"{member.guild.name} • {member_count} members",
+        icon_url=member.guild.icon.url if member.guild.icon else None,
+    )
+    await channel.send(embed=embed)
+    return True
 
 
 async def reload_guild_persistent_embeds(bot: discord.Client, guild_id: int):
@@ -121,7 +211,7 @@ async def make_edit_embed(before: discord.Message, diff_text: str) -> discord.Em
     embed = discord.Embed(
         title="Message Edited",
         description=f"Message from **{before.author.display_name}** was edited.",
-        color=discord.Color.orange(),
+        color=await get_embed_color(before.guild.id, 'message_edited') if before.guild else discord.Color.orange(),
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
 
@@ -149,7 +239,7 @@ async def make_edit_embed_from_db(message_row, diff_text: str, bot: discord.Clie
     embed = discord.Embed(
         title="Message Edited",
         description=f"Message from **{discord.utils.get(bot.get_all_members(), id=author_id).display_name}** was edited.",
-        color=discord.Color.orange(),
+        color=await get_embed_color(guild_id, 'message_edited') if guild_id else discord.Color.orange(),
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     
@@ -175,7 +265,7 @@ async def make_delete_embed(message, channel_mention) -> discord.Embed:
     embed = discord.Embed(
         title="Message Deleted",
         description=f"In {channel_mention} a message was deleted.",
-        color=discord.Color.red(),
+        color=await get_embed_color(message.guild.id, 'message_deleted') if message.guild else discord.Color.red(),
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
 
@@ -195,7 +285,7 @@ async def make_delete_embed_from_db(message_row, channel_mention: str) -> discor
     embed = discord.Embed(
         title="Message Deleted",
         description=f"In {channel_mention} a message was deleted.",
-        color=discord.Color.red(),
+        color=await get_embed_color(guild_id, 'message_deleted') if guild_id else discord.Color.red(),
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
     

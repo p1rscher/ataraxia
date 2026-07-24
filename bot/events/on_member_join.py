@@ -2,7 +2,7 @@ import discord
 import logging
 from typing import Optional
 from core import database_pg as db
-from utils.embeds import get_guild_color
+from utils.embeds import get_embed_color, send_member_traffic_embed
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ async def on_member_join(member: discord.Member):
                     embed = discord.Embed(
                         title=process_text(welcome.get('embed_title')) or None,
                         description=process_text(welcome.get('embed_description')) or None,
-                        color=await get_guild_color(member.guild.id, 'color_welcome')
+                        color=await get_embed_color(member.guild.id, 'welcome_message', 'color_welcome')
                     )
                     
                     if welcome.get('embed_author_name'):
@@ -82,34 +82,7 @@ async def on_member_join(member: discord.Member):
             except Exception as e:
                 logger.error(f"Failed to send welcome message for {member} in guild {member.guild.id}: {e}")
 
-    # Send user traffic log if configured
-    traffic_channel_id = await db.get_traffic_log_channel_id(member.guild.id)
-    if traffic_channel_id:
-        traffic_channel = member.guild.get_channel(traffic_channel_id)
-        if traffic_channel and isinstance(traffic_channel, discord.TextChannel):
-            try:
-                created_ts = int(member.created_at.timestamp())
-                color = await get_guild_color(member.guild.id)
-
-                embed = discord.Embed(
-                    title=f"{member.display_name} joined the server",
-                    color=color,
-                )
-                embed.add_field(
-                    name="User",
-                    value=member.mention,
-                    inline=True,
-                )
-                embed.add_field(
-                    name="Account creation",
-                    value=f"<t:{created_ts}:f> (<t:{created_ts}:R>)",
-                    inline=True,
-                )
-                embed.set_thumbnail(url=member.display_avatar.url)
-                embed.set_footer(
-                    text=f"{member.guild.name} • {member.guild.member_count} members",
-                    icon_url=member.guild.icon.url if member.guild.icon else None,
-                )
-                await traffic_channel.send(embed=embed)
-            except Exception as e:
-                logger.error(f"Failed to send traffic join log for {member} in guild {member.guild.id}: {e}")
+    try:
+        await send_member_traffic_embed(member, 'join')
+    except Exception as e:
+        logger.error(f"Failed to send traffic join log for {member} in guild {member.guild.id}: {e}")

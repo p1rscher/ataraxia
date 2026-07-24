@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 import io
 from core import database_pg as db
-from utils.embeds import get_guild_color
+from utils.embeds import get_embed_color
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ class TicketPanelView(discord.ui.View):
         embed = discord.Embed(
             title=f"Ticket #{ticket_id}",
             description=f"Welcome {member.mention}!\n\nPlease describe your issue and our support team will be with you shortly.",
-            color=await get_guild_color(interaction.guild.id, 'color_ticket')
+            color=await get_embed_color(interaction.guild.id, 'ticket_panel', 'color_ticket')
         )
         
         ping_content = f"{member.mention}"
@@ -219,7 +219,7 @@ class TicketCog(commands.Cog):
         
         embed = discord.Embed(
             title="✅ Ticket System Set Up",
-            color=await get_guild_color(interaction.guild.id, 'color_ticket')
+            color=await get_embed_color(interaction.guild.id, 'ticket_panel', 'color_ticket')
         )
         embed.add_field(name="Category", value=category.mention)
         embed.add_field(name="Support Role", value=support_role.mention)
@@ -248,7 +248,7 @@ class TicketCog(commands.Cog):
         embed = discord.Embed(
             title=title,
             description=description,
-            color=await get_guild_color(interaction.guild.id, 'color_ticket')
+            color=await get_embed_color(interaction.guild.id, 'ticket_panel', 'color_ticket')
         )
         
         msg = await channel.send(embed=embed, view=TicketPanelView())

@@ -14,6 +14,9 @@ LOG_TYPE_CHOICES = [
     app_commands.Choice(name="Level Logs", value="level"),
     app_commands.Choice(name="Moderation Logs", value="moderation"),
     app_commands.Choice(name="User Traffic Logs", value="traffic"),
+    app_commands.Choice(name="Traffic: Member Joins", value="traffic_join"),
+    app_commands.Choice(name="Traffic: Member Leaves", value="traffic_leave"),
+    app_commands.Choice(name="Traffic: Server Boosts", value="traffic_boost"),
     app_commands.Choice(name="Ticket Logs", value="ticket"),
 ]
 
@@ -75,7 +78,12 @@ class LogConfigCog(commands.Cog):
             description = f"Moderation action logs will now be sent to {channel.mention}."
         elif type.value == "traffic":
             await db.set_traffic_log_channel(ctx.guild.id, channel.id)
-            description = f"User traffic logs (joins/leaves) will now be sent to {channel.mention}."
+            await db.enable_traffic_events(ctx.guild.id)
+            description = f"All user traffic logs will now use {channel.mention} unless a dedicated channel is configured."
+        elif type.value.startswith("traffic_"):
+            event = type.value.removeprefix("traffic_")
+            await db.set_traffic_event_channel(ctx.guild.id, event, channel.id)
+            description = f"Traffic {event} logs will now be sent to {channel.mention}."
         elif type.value == "ticket":
             await db.set_ticket_log_channel(ctx.guild.id, channel.id)
             description = f"Ticket logs (transcripts & closure) will now be sent to {channel.mention}."
@@ -114,7 +122,11 @@ class LogConfigCog(commands.Cog):
             description = "Moderation action logs have been disabled."
         elif type.value == "traffic":
             await db.clear_traffic_log_channel(ctx.guild.id)
-            description = "User traffic logs have been disabled."
+            description = "The shared traffic channel was cleared. Dedicated traffic channels remain active."
+        elif type.value.startswith("traffic_"):
+            event = type.value.removeprefix("traffic_")
+            await db.clear_traffic_event_channel(ctx.guild.id, event)
+            description = f"Traffic {event} logs now fall back to the shared traffic channel."
         elif type.value == "ticket":
             await db.clear_ticket_log_channel(ctx.guild.id)
             description = "Ticket logs have been disabled."
@@ -152,8 +164,14 @@ class LogConfigCog(commands.Cog):
             await db.clear_mod_log_channel(ctx.guild.id)
             description = "Moderation action logs have been disabled."
         elif type.value == "traffic":
-            await db.clear_traffic_log_channel(ctx.guild.id)
+            await db.set_traffic_log_channel(ctx.guild.id, 0)
+            for event in ("join", "leave", "boost"):
+                await db.set_traffic_event_channel(ctx.guild.id, event, 0)
             description = "User traffic logs have been disabled."
+        elif type.value.startswith("traffic_"):
+            event = type.value.removeprefix("traffic_")
+            await db.set_traffic_event_channel(ctx.guild.id, event, 0)
+            description = f"Traffic {event} logs are now disabled."
         elif type.value == "ticket":
             await db.clear_ticket_log_channel(ctx.guild.id)
             description = "Ticket logs have been disabled."
@@ -180,6 +198,9 @@ class LogConfigCog(commands.Cog):
         level_log_channel_id = await db.get_level_log_channel_id(ctx.guild.id)
         mod_log_channel_id = await db.get_mod_log_channel_id(ctx.guild.id)
         traffic_log_channel_id = await db.get_traffic_log_channel_id(ctx.guild.id)
+        traffic_join_channel_id = await db.get_traffic_event_channel_id(ctx.guild.id, "join")
+        traffic_leave_channel_id = await db.get_traffic_event_channel_id(ctx.guild.id, "leave")
+        traffic_boost_channel_id = await db.get_traffic_event_channel_id(ctx.guild.id, "boost")
         ticket_log_channel_id = await db.get_ticket_log_channel_id(ctx.guild.id)
 
         embed = discord.Embed(
@@ -228,9 +249,36 @@ class LogConfigCog(commands.Cog):
             name="User Traffic Logs",
             value=(
                 f"{await self._channel_display(ctx.guild, traffic_log_channel_id)}\n"
-                "Covers member joins and leaves."
+                "Shared fallback channel for joins, leaves, and boosts."
             ),
             inline=False,
+        )
+        embed.add_field(
+            name="Traffic: Member Joins",
+            value=(
+                "Uses shared fallback"
+                if traffic_join_channel_id is None
+                else await self._channel_display(ctx.guild, traffic_join_channel_id)
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Traffic: Member Leaves",
+            value=(
+                "Uses shared fallback"
+                if traffic_leave_channel_id is None
+                else await self._channel_display(ctx.guild, traffic_leave_channel_id)
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Traffic: Server Boosts",
+            value=(
+                "Uses shared fallback"
+                if traffic_boost_channel_id is None
+                else await self._channel_display(ctx.guild, traffic_boost_channel_id)
+            ),
+            inline=True,
         )
         embed.add_field(
             name="Ticket Logs",

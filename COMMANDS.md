@@ -340,6 +340,35 @@ Calculate a math expression.
 
 ## ⚙️ Configuration
 
+### `/settings color` - Individual Embed Colors
+
+**`/settings color set [hex_color] [type]`** 🟠
+Set the color of one concrete embed instead of changing an entire color group.
+- **Examples:**
+  - `/settings color set #57F287 traffic_join`
+  - `/settings color set #ED4245 traffic_leave`
+  - `/settings color set #FEE75C traffic_boost`
+- **Traffic logs:** joins, leaves, and boosts use the shared traffic-log channel by default, but can be routed to separate channels and each embed can have its own color.
+- **Traffic channels:** the shared traffic channel is optional. Administrators can configure separate channels with `/log set` for `Traffic: Member Joins`, `Traffic: Member Leaves`, and `Traffic: Server Boosts`.
+- **Timestamp:** traffic embeds include Discord's message timestamp.
+- **Member count:** displayed with the correct ordinal suffix, such as `31st`, `22nd`, or `13th`.
+
+**`/settings color view`** 🟠
+View legacy fallback colors and individual embed overrides.
+
+**`/settings color reset`** 🟠
+Reset all fallback and individual embed colors.
+
+### `/log` - Traffic Log Channels
+
+The shared `User Traffic Logs` channel is optional. Dedicated channels can be configured independently:
+
+- `/log set` → `Traffic: Member Joins`
+- `/log set` → `Traffic: Member Leaves`
+- `/log set` → `Traffic: Server Boosts`
+
+Use `/log clear` to let an event fall back to the shared traffic channel, or `/log disable` to disable only that event. `/log status` shows all four settings.
+
 ### `/log-config` - Logging Configuration
 
 **`/log-config set-message [channel]`** 🟠

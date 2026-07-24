@@ -3,7 +3,7 @@ import discord
 import logging
 from typing import Optional
 from core import database_pg as db
-from datetime import datetime
+from utils.embeds import get_embed_color
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +27,8 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 embed = discord.Embed(
                     title="🔊 Voice Channel Joined",
                     description=f"{member.mention} joined {after.channel.mention}",
-                    color=discord.Color.green(),
-                    timestamp=datetime.now()
+                    color=await get_embed_color(member.guild.id, 'voice_join'),
+                    timestamp=discord.utils.utcnow()
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
                 embed.add_field(name="User", value=f"{member} ({member.id})", inline=True)
@@ -39,8 +39,8 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 embed = discord.Embed(
                     title="🔇 Voice Channel Left",
                     description=f"{member.mention} left {before.channel.mention}",
-                    color=discord.Color.red(),
-                    timestamp=datetime.now()
+                    color=await get_embed_color(member.guild.id, 'voice_leave'),
+                    timestamp=discord.utils.utcnow()
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
                 embed.add_field(name="User", value=f"{member} ({member.id})", inline=True)
@@ -51,8 +51,8 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 embed = discord.Embed(
                     title="↔️ Voice Channel Switched",
                     description=f"{member.mention} moved from {before.channel.mention} to {after.channel.mention}",
-                    color=discord.Color.blue(),
-                    timestamp=datetime.now()
+                    color=await get_embed_color(member.guild.id, 'voice_switch'),
+                    timestamp=discord.utils.utcnow()
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
                 embed.add_field(name="User", value=f"{member} ({member.id})", inline=False)

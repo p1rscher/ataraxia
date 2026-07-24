@@ -43,6 +43,9 @@ async def init_db():
                 voice_log_channel_id BIGINT,
                 mod_log_channel_id BIGINT,
                 traffic_log_channel_id BIGINT,
+                traffic_join_channel_id BIGINT,
+                traffic_leave_channel_id BIGINT,
+                traffic_boost_channel_id BIGINT,
                 ticket_log_channel_id BIGINT,
                 custom_prefix TEXT,
                 default_language TEXT,
@@ -64,6 +67,21 @@ async def init_db():
         await conn.execute("""
             ALTER TABLE guild_settings
             ADD COLUMN IF NOT EXISTS traffic_log_channel_id BIGINT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS traffic_join_channel_id BIGINT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS traffic_leave_channel_id BIGINT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS traffic_boost_channel_id BIGINT
         """)
 
         await conn.execute("""
@@ -530,6 +548,18 @@ async def init_db():
             )
         """)
 
+        # Individual embed colors. ``embed_key`` identifies one concrete
+        # embed, while the legacy embed_colors table remains as a fallback for
+        # older configurations.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS embed_color_overrides (
+                guild_id BIGINT NOT NULL,
+                embed_key TEXT NOT NULL,
+                color INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, embed_key)
+            )
+        """)
+
         # Add color_verification column if it doesn't exist
         try:
             await conn.execute("ALTER TABLE embed_colors ADD COLUMN IF NOT EXISTS color_verification INTEGER NOT NULL DEFAULT 5793266")
@@ -973,6 +1003,68 @@ async def get_traffic_log_channel_id(guild_id: int) -> Optional[int]:
             guild_id
         )
         return row['traffic_log_channel_id'] if row else None
+
+
+TRAFFIC_EVENT_COLUMNS = {
+    'join': 'traffic_join_channel_id',
+    'leave': 'traffic_leave_channel_id',
+    'boost': 'traffic_boost_channel_id',
+}
+
+
+async def set_traffic_event_channel(guild_id: int, event: str, channel_id: int):
+    """Set a dedicated traffic channel; use 0 to explicitly disable one event."""
+    column = TRAFFIC_EVENT_COLUMNS.get(event)
+    if not column:
+        raise ValueError(f"Unsupported traffic event: {event}")
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            f"INSERT INTO guild_settings (guild_id, {column}) VALUES ($1, $2) "
+            f"ON CONFLICT (guild_id) DO UPDATE SET {column} = $2",
+            guild_id,
+            channel_id,
+        )
+
+
+async def clear_traffic_event_channel(guild_id: int, event: str):
+    """Remove a dedicated channel and fall back to the shared traffic channel."""
+    column = TRAFFIC_EVENT_COLUMNS.get(event)
+    if not column:
+        raise ValueError(f"Unsupported traffic event: {event}")
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            f"UPDATE guild_settings SET {column} = NULL WHERE guild_id = $1",
+            guild_id,
+        )
+
+
+async def get_traffic_event_channel_id(guild_id: int, event: str) -> Optional[int]:
+    """Return a dedicated traffic channel, None if it should use the shared one."""
+    column = TRAFFIC_EVENT_COLUMNS.get(event)
+    if not column:
+        raise ValueError(f"Unsupported traffic event: {event}")
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT {column} FROM guild_settings WHERE guild_id = $1",
+            guild_id,
+        )
+    return row[column] if row else None
+
+
+async def enable_traffic_events(guild_id: int):
+    """Re-enable events explicitly disabled by the shared traffic switch."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE guild_settings
+            SET traffic_join_channel_id = NULLIF(traffic_join_channel_id, 0),
+                traffic_leave_channel_id = NULLIF(traffic_leave_channel_id, 0),
+                traffic_boost_channel_id = NULLIF(traffic_boost_channel_id, 0),
+                traffic_log_channel_id = NULLIF(traffic_log_channel_id, 0)
+            WHERE guild_id = $1
+            """,
+            guild_id,
+        )
 
 # ==================== TICKET LOG CHANNEL ====================
 
@@ -2606,6 +2698,63 @@ async def reset_guild_colors(guild_id: int):
     """Resets all embed colors for a guild to defaults."""
     async with _pool.acquire() as conn:
         await conn.execute("DELETE FROM embed_colors WHERE guild_id = $1", guild_id)
+
+
+async def get_embed_color_override(guild_id: int, embed_key: str) -> Optional[int]:
+    """Return an individual embed color override, if one exists."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT color FROM embed_color_overrides WHERE guild_id = $1 AND embed_key = $2",
+            guild_id,
+            embed_key,
+        )
+    return row['color'] if row else None
+
+
+async def set_embed_color(guild_id: int, embed_key: str, color: int):
+    """Set the color of one concrete embed for a guild."""
+    if not embed_key or len(embed_key) > 80:
+        raise ValueError("Invalid embed key")
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO embed_color_overrides (guild_id, embed_key, color)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (guild_id, embed_key) DO UPDATE SET color = EXCLUDED.color
+            """,
+            guild_id,
+            embed_key,
+            color,
+        )
+
+
+async def reset_embed_color(guild_id: int, embed_key: str):
+    """Remove one individual override and restore its fallback color."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM embed_color_overrides WHERE guild_id = $1 AND embed_key = $2",
+            guild_id,
+            embed_key,
+        )
+
+
+async def get_embed_color_overrides(guild_id: int) -> dict[str, int]:
+    """Return all individual embed color overrides for a guild."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT embed_key, color FROM embed_color_overrides WHERE guild_id = $1",
+            guild_id,
+        )
+    return {row['embed_key']: row['color'] for row in rows}
+
+
+async def reset_embed_colors(guild_id: int):
+    """Remove all individual embed color overrides for a guild."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM embed_color_overrides WHERE guild_id = $1",
+            guild_id,
+        )
 
 
 # ==================== MODERATION ====================

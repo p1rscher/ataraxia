@@ -2,6 +2,7 @@ import discord
 import logging
 from typing import Optional
 from core import database_pg as db
+from utils.embeds import send_member_traffic_embed
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,14 @@ async def on_member_update(before: discord.Member, after: discord.Member):
     # Track username or global_name changes globally
     if before.name != after.name or before.global_name != after.global_name:
         await db.upsert_user(after, force=True)
+
+    # Boosts use the same traffic-log channel as joins and leaves. The embed
+    # still has its own configurable color via the ``traffic_boost`` key.
+    if not before.premium_since and after.premium_since:
+        try:
+            await send_member_traffic_embed(after, 'boost')
+        except Exception as e:
+            logger.error(f"Failed to send traffic boost log for {after} in guild {after.guild.id}: {e}")
     
     # Check if roles changed
     if before.roles == after.roles:

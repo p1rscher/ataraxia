@@ -28,6 +28,25 @@ COLOR_DESCRIPTIONS = {
     'ticket': 'Color for ticket panels',
 }
 
+# New settings target individual embeds. Legacy group values remain available
+# as fallbacks so existing servers do not change appearance unexpectedly.
+EMBED_COLOR_CHOICES = [
+    app_commands.Choice(name="Welcome message", value="welcome_message"),
+    app_commands.Choice(name="Traffic: member joined", value="traffic_join"),
+    app_commands.Choice(name="Traffic: member left", value="traffic_leave"),
+    app_commands.Choice(name="Traffic: server boost", value="traffic_boost"),
+    app_commands.Choice(name="Verification message", value="verification_message"),
+    app_commands.Choice(name="Ticket panel", value="ticket_panel"),
+    app_commands.Choice(name="Level-up notification", value="level_up_notification"),
+    app_commands.Choice(name="Counting message", value="counting_message"),
+    app_commands.Choice(name="Message edited log", value="message_edited"),
+    app_commands.Choice(name="Message deleted log", value="message_deleted"),
+    app_commands.Choice(name="Voice joined log", value="voice_join"),
+    app_commands.Choice(name="Voice left log", value="voice_leave"),
+    app_commands.Choice(name="Voice switched log", value="voice_switch"),
+    app_commands.Choice(name="Global fallback (legacy)", value="global"),
+]
+
 
 class SettingsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -64,17 +83,9 @@ class SettingsCog(commands.Cog):
     @color_group.command(name="set", description="Set a custom embed color for this server")
     @app_commands.describe(
         hex_color="Hex color code (e.g. #FF5733 or FF5733)",
-        type="Optional: Specific type to customize (default: Global)"
+        type="The individual embed to customize (default: Global fallback)"
     )
-    @app_commands.choices(type=[
-        app_commands.Choice(name="Global (Used for everything)", value="global"),
-        app_commands.Choice(name="Welcome messages", value="welcome"),
-        app_commands.Choice(name="Level up notifications", value="level_up"),
-        app_commands.Choice(name="Success messages", value="success"),
-        app_commands.Choice(name="Counting game", value="counting"),
-        app_commands.Choice(name="Verification messages", value="verification"),
-        app_commands.Choice(name="Ticket panels", value="ticket"),
-    ])
+    @app_commands.choices(type=EMBED_COLOR_CHOICES)
     @commands.has_permissions(administrator=True)
     @commands.guild_only()
     async def color_set(self, ctx: commands.Context, hex_color: str, type: str = "global"):
@@ -93,19 +104,24 @@ class SettingsCog(commands.Cog):
             await ctx.send("❌ Invalid hex color. Use format `#FF5733` or `FF5733`.", ephemeral=True)
             return
 
-        color_type = COLOR_TYPES[type]
-        await db.set_guild_color(ctx.guild.id, color_type, color_int)
+        if type in COLOR_TYPES:
+            # Backwards-compatible legacy group setting.
+            await db.set_guild_color(ctx.guild.id, COLOR_TYPES[type], color_int)
+            target_label = f"{type.title()} fallback"
+        else:
+            await db.set_embed_color(ctx.guild.id, type, color_int)
+            target_label = type.replace('_', ' ').title()
 
         embed = discord.Embed(
-            description=f"✅ **{type.title()}** color updated!",
+            description=f"✅ **{target_label}** color updated!",
             color=discord.Color(color_int)
         )
         embed.add_field(name="Color", value=f"`#{hex_clean.upper()}`")
         if type == "global":
-            embed.set_footer(text="This color will now be used for all bot embeds by default.")
+            embed.set_footer(text="This is only the fallback for embeds without an individual color.")
         
         await ctx.send(embed=embed, ephemeral=True)
-        logger.info(f"Guild {ctx.guild.id} set {color_type} to #{hex_clean.upper()}")
+        logger.info(f"Guild {ctx.guild.id} set embed color {type} to #{hex_clean.upper()}")
         
         # Reload all persistent embeds to apply the new color
         await reload_guild_persistent_embeds(self.bot, ctx.guild.id)
@@ -119,12 +135,13 @@ class SettingsCog(commands.Cog):
             return
 
         colors = await db.get_guild_colors(ctx.guild.id)
+        overrides = await db.get_embed_color_overrides(ctx.guild.id)
         defaults = db.DEFAULT_COLORS
         primary_color = await get_guild_color(ctx.guild.id)
 
         embed = discord.Embed(
-            title="🎨 Server Embed Colors", 
-            description="If a color is not set, it will automatically follow the **Global** color.",
+            title="🎨 Server Embed Colors",
+            description="Each concrete embed can have its own color. Legacy group colors are used only as fallbacks.",
             color=primary_color
         )
         
@@ -145,6 +162,16 @@ class SettingsCog(commands.Cog):
                 value=f"`#{val:06X}` - {COLOR_DESCRIPTIONS[key]}",
                 inline=False
             )
+
+        if overrides:
+            embed.add_field(
+                name="Individual overrides",
+                value="\n".join(
+                    f"**{key.replace('_', ' ').title()}** — `#{value:06X}`"
+                    for key, value in sorted(overrides.items())
+                ),
+                inline=False,
+            )
         await ctx.send(embed=embed, ephemeral=True)
 
     @color_group.command(name="reset", description="Reset all embed colors to defaults")
@@ -156,6 +183,7 @@ class SettingsCog(commands.Cog):
             return
 
         await db.reset_guild_colors(ctx.guild.id)
+        await db.reset_embed_colors(ctx.guild.id)
         await ctx.send("✅ All embed colors reset to defaults.", ephemeral=True)
         
         # Reload all persistent embeds
