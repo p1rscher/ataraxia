@@ -5,8 +5,10 @@ from core import database_pg as db
 from utils.embeds import (
     get_embed_color,
     has_time_placeholder,
+    normalize_embed_fields,
     process_member_text,
     send_member_traffic_embed,
+    set_embed_footer,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,11 @@ async def on_member_join(member: discord.Member):
                 content = process_text(welcome.get('message'))
                 
                 embed = None
-                if any(welcome.get(k) for k in ['embed_title', 'embed_description', 'embed_image', 'embed_thumbnail', 'embed_author_name', 'embed_footer_text']):
+                if any(welcome.get(k) for k in [
+                    'embed_title', 'embed_description', 'embed_image',
+                    'embed_thumbnail', 'embed_author_name', 'embed_footer_text',
+                    'embed_footer_icon', 'embed_fields',
+                ]):
                     embed_values = [
                         welcome.get('embed_title'),
                         welcome.get('embed_description'),
@@ -93,9 +99,18 @@ async def on_member_join(member: discord.Member):
                     if welcome.get('embed_image'):
                         embed.set_image(url=process_embed_text(welcome.get('embed_image')))
                         
-                    if welcome.get('embed_footer_text'):
-                        icon = process_footer_text(welcome.get('embed_footer_icon')) or None
-                        embed.set_footer(text=process_footer_text(welcome.get('embed_footer_text')), icon_url=icon)
+                    set_embed_footer(
+                        embed,
+                        text=process_footer_text(welcome.get('embed_footer_text')),
+                        icon_url=process_embed_text(welcome.get('embed_footer_icon')),
+                    )
+
+                    for field in normalize_embed_fields(welcome.get('embed_fields')):
+                        embed.add_field(
+                            name=process_embed_text(field['name']) or 'Field',
+                            value=(process_embed_text(field['value']) or '-')[:1024],
+                            inline=bool(field.get('inline', False)),
+                        )
 
                 if not embed and not content:
                     pass # Nothing to send

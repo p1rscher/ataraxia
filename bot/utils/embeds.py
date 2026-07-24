@@ -4,10 +4,43 @@ import datetime
 import asyncio
 import json
 import logging
+import json
 from typing import Optional
 from core import database_pg as db
 
 logger = logging.getLogger(__name__)
+
+EMBED_EMPTY_TEXT = "\u200b"
+
+
+def set_embed_footer(
+    embed: discord.Embed,
+    *,
+    text: Optional[str] = None,
+    icon_url: Optional[str] = None,
+) -> None:
+    """Set a footer safely, including the icon-only case Discord requires text for."""
+    if text or icon_url:
+        embed.set_footer(text=text or EMBED_EMPTY_TEXT, icon_url=icon_url or None)
+    else:
+        embed.remove_footer()
+
+
+def normalize_embed_fields(value) -> list[dict]:
+    """Normalize JSON/list embed fields and discard malformed entries."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return []
+    if not isinstance(value, list):
+        return []
+    return [
+        field for field in value
+        if isinstance(field, dict)
+        and isinstance(field.get('name'), str)
+        and isinstance(field.get('value'), str)
+    ][:25]
 
 
 async def get_guild_color(guild_id: int, color_type: str = 'color_primary') -> discord.Color:
@@ -227,11 +260,11 @@ async def send_member_traffic_embed(
         embed.set_thumbnail(url=render(default_config['thumbnail']))
     if default_config.get('image'):
         embed.set_image(url=render(default_config['image']))
-    if default_config.get('footer_text'):
-        embed.set_footer(
-            text=render_footer(default_config['footer_text']) or " ",
-            icon_url=render(default_config.get('footer_icon')),
-        )
+    set_embed_footer(
+        embed,
+        text=render_footer(default_config.get('footer_text')),
+        icon_url=render(default_config.get('footer_icon')),
+    )
     for field in raw_fields[:25]:
         if not isinstance(field, dict) or not field.get('name'):
             continue

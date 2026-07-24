@@ -223,6 +223,7 @@ async def init_db():
                 description TEXT,
                 image_url TEXT,
                 embed_color INTEGER NOT NULL DEFAULT 5793266,
+                embed_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
                 role_removal BOOLEAN DEFAULT TRUE,
                 multiple_slots BOOLEAN DEFAULT TRUE,
                 include_overview BOOLEAN DEFAULT FALSE,
@@ -238,6 +239,7 @@ async def init_db():
         try:
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN image_url TEXT")
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN embed_color INTEGER NOT NULL DEFAULT 5793266")
+            await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN embed_fields JSONB NOT NULL DEFAULT '[]'::jsonb")
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN role_removal BOOLEAN DEFAULT TRUE")
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN multiple_slots BOOLEAN DEFAULT TRUE")
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN include_overview BOOLEAN DEFAULT FALSE")
@@ -251,6 +253,10 @@ async def init_db():
             await conn.execute(
                 "ALTER TABLE reaction_role_messages "
                 "ADD COLUMN IF NOT EXISTS embed_color INTEGER NOT NULL DEFAULT 5793266"
+            )
+            await conn.execute(
+                "ALTER TABLE reaction_role_messages "
+                "ADD COLUMN IF NOT EXISTS embed_fields JSONB NOT NULL DEFAULT '[]'::jsonb"
             )
         except Exception as exc:
             logger.warning("Could not migrate reaction-role embed_color: %s", exc)
@@ -274,7 +280,6 @@ async def init_db():
         except asyncpg.exceptions.DuplicateColumnError:
             pass
 
-
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_reaction_role_messages_guild
             ON reaction_role_messages(guild_id)
@@ -297,8 +302,27 @@ async def init_db():
                 embed_author_name TEXT,
                 embed_author_icon TEXT,
                 embed_footer_text TEXT,
-                embed_footer_icon TEXT
+                embed_footer_icon TEXT,
+                embed_fields JSONB NOT NULL DEFAULT '[]'::jsonb
             )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS trigger_embeds (
+                guild_id BIGINT NOT NULL,
+                trigger_word TEXT NOT NULL,
+                content TEXT,
+                embed_data JSONB NOT NULL,
+                created_by BIGINT,
+                created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC'),
+                updated_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC'),
+                PRIMARY KEY (guild_id, trigger_word)
+            )
+        """)
+
+        await conn.execute("""
+            ALTER TABLE trigger_embeds
+            ADD COLUMN IF NOT EXISTS content TEXT
         """)
         
         try:
@@ -310,8 +334,14 @@ async def init_db():
             await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_author_icon TEXT")
             await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_footer_text TEXT")
             await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_footer_icon TEXT")
+            await conn.execute("ALTER TABLE welcome_message ADD COLUMN embed_fields JSONB NOT NULL DEFAULT '[]'::jsonb")
         except asyncpg.exceptions.DuplicateColumnError:
             pass
+
+        await conn.execute(
+            "ALTER TABLE welcome_message "
+            "ADD COLUMN IF NOT EXISTS embed_fields JSONB NOT NULL DEFAULT '[]'::jsonb"
+        )
         
         # Temp Voice Settings
         await conn.execute("""
@@ -1439,7 +1469,11 @@ async def update_reaction_role_message(message_id: int, **kwargs):
     values = []
     
     for param_id, (key, value) in enumerate(kwargs.items(), start=1):
-        set_clauses.append(f"{key} = ${param_id}")
+        set_clauses.append(
+            f"{key} = ${param_id}::jsonb" if key == 'embed_fields' else f"{key} = ${param_id}"
+        )
+        if key == 'embed_fields':
+            value = json.dumps(value)
         values.append(value)
         
     values.append(message_id)
@@ -1537,7 +1571,11 @@ async def update_welcome_message(guild_id: int, **kwargs):
     set_clauses = []
     values = []
     for i, (key, value) in enumerate(kwargs.items(), start=1):
-        set_clauses.append(f"{key} = ${i}")
+        set_clauses.append(
+            f"{key} = ${i}::jsonb" if key == 'embed_fields' else f"{key} = ${i}"
+        )
+        if key == 'embed_fields':
+            value = json.dumps(value)
         values.append(value)
         
     values.append(guild_id)
@@ -1569,6 +1607,92 @@ async def get_welcome_message(guild_id: int):
 async def remove_welcome_message(guild_id: int):
     async with _pool.acquire() as conn:
         await conn.execute("DELETE FROM welcome_message WHERE guild_id = $1", guild_id)
+
+
+# ==================== TRIGGER EMBEDS ====================
+
+async def create_trigger_embed(
+    guild_id: int,
+    trigger_word: str,
+    embed_data: dict,
+    created_by: Optional[int] = None,
+    content: Optional[str] = None,
+):
+    """Create or replace one trigger embed configuration."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO trigger_embeds (guild_id, trigger_word, content, embed_data, created_by)
+            VALUES ($1, $2, $3, $4::jsonb, $5)
+            ON CONFLICT (guild_id, trigger_word) DO UPDATE SET
+                content = EXCLUDED.content,
+                embed_data = EXCLUDED.embed_data,
+                updated_at = NOW()
+            """,
+            guild_id,
+            trigger_word,
+            content,
+            json.dumps(embed_data),
+            created_by,
+        )
+
+
+async def update_trigger_embed(
+    guild_id: int,
+    trigger_word: str,
+    *,
+    content: Optional[str] = None,
+    embed_data: Optional[dict] = None,
+):
+    """Update the outside message content and/or embed template."""
+    updates = []
+    values = []
+    if content is not None:
+        updates.append(f"content = ${len(values) + 1}")
+        values.append(content)
+    if embed_data is not None:
+        updates.append(f"embed_data = ${len(values) + 1}::jsonb")
+        values.append(json.dumps(embed_data))
+    if not updates:
+        return
+    values.extend([guild_id, trigger_word])
+    guild_param = len(values) - 1
+    trigger_param = len(values)
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            f"UPDATE trigger_embeds SET {', '.join(updates)}, updated_at = NOW() "
+            f"WHERE guild_id = ${guild_param} AND trigger_word = ${trigger_param}",
+            *values,
+        )
+
+
+async def get_trigger_embed(guild_id: int, trigger_word: str):
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM trigger_embeds WHERE guild_id = $1 AND trigger_word = $2",
+            guild_id,
+            trigger_word,
+        )
+    return dict(row) if row else None
+
+
+async def get_trigger_embeds(guild_id: int) -> list[dict]:
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM trigger_embeds WHERE guild_id = $1 ORDER BY trigger_word",
+            guild_id,
+        )
+    return [dict(row) for row in rows]
+
+
+async def delete_trigger_embed(guild_id: int, trigger_word: str) -> bool:
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM trigger_embeds WHERE guild_id = $1 AND trigger_word = $2",
+            guild_id,
+            trigger_word,
+        )
+    return result == "DELETE 1"
 
 
 # ==================== TEMP VOICE ====================

@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 import logging
 from typing import Awaitable, Callable, Optional
-from utils.embeds import get_guild_color
+from utils.embeds import get_guild_color, set_embed_footer
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +97,12 @@ class AuthorFooterModal(discord.ui.Modal, title='Edit Author & Footer'):
         f_t = self.footer_text.value
         if f_t == '°':
             embed.remove_footer()
-        elif f_t:
-            embed.set_footer(text=f_t, icon_url=self.footer_icon.value if self.footer_icon.value else None)
+        elif f_t or self.footer_icon.value:
+            set_embed_footer(
+                embed,
+                text=f_t or None,
+                icon_url=self.footer_icon.value or None,
+            )
             
         await self.builder_view.edit_preview(interaction)
 
@@ -159,6 +163,129 @@ class AddFieldModal(discord.ui.Modal, title='Add Field'):
         await self.builder_view.edit_preview(interaction)
 
 
+class FieldValueModal(discord.ui.Modal):
+    field_name = discord.ui.TextInput(label='Field Name', max_length=256)
+    field_value = discord.ui.TextInput(label='Field Value', style=discord.TextStyle.paragraph, max_length=1024)
+    inline = discord.ui.TextInput(label='Inline? (True/False)', default='False', max_length=5)
+
+    def __init__(self, field_view: 'EmbedFieldEditorView', index: Optional[int] = None):
+        super().__init__(title='Edit Field' if index is not None else 'Add Field')
+        self.field_view = field_view
+        self.index = index
+        if index is not None:
+            field = field_view.fields[index]
+            self.field_name.default = field.get('name', '')
+            self.field_value.default = field.get('value', '')
+            self.inline.default = str(bool(field.get('inline', False)))
+
+    async def on_submit(self, interaction: commands.Context):
+        field = {
+            'name': str(self.field_name).strip(),
+            'value': str(self.field_value),
+            'inline': str(self.inline).strip().lower() in {'true', 'yes', '1'},
+        }
+        if not field['name'] or not field['value']:
+            await interaction.response.send_message('❌ Field name and value are required.', ephemeral=True)
+            return
+        if self.index is None:
+            self.field_view.fields.append(field)
+        else:
+            self.field_view.fields[self.index] = field
+        await self.field_view.commit(interaction)
+
+
+class EmbedFieldEditorView(discord.ui.View):
+    """Reusable field editor for every configurable embed in the bot."""
+
+    def __init__(self, fields: list[dict], on_change: Callable[[list[dict]], Awaitable[None]]):
+        super().__init__(timeout=900)
+        self.fields = [dict(field) for field in fields if isinstance(field, dict)]
+        self.on_change = on_change
+        self.selected_index: Optional[int] = None
+        self.field_select = discord.ui.Select(
+            placeholder='Select a field to edit or remove...',
+            min_values=1,
+            max_values=1,
+            options=self._options(),
+            disabled=not self.fields,
+            row=0,
+        )
+        self.field_select.callback = self._select_field
+        self.add_item(self.field_select)
+
+    def _options(self):
+        if not self.fields:
+            return [discord.SelectOption(label='No fields configured', value='none')]
+        return [
+            discord.SelectOption(
+                label=f"{index + 1}. {field.get('name', 'Unnamed')}"[:100],
+                value=str(index),
+                description=str(field.get('value', ''))[:100],
+            )
+            for index, field in enumerate(self.fields[:25])
+        ]
+
+    def _summary(self) -> discord.Embed:
+        embed = discord.Embed(title='🧩 Embed Fields', description='Manage the fields of this embed.')
+        if not self.fields:
+            embed.description = 'No fields configured yet.'
+        for index, field in enumerate(self.fields[:25], start=1):
+            embed.add_field(
+                name=f"{field.get('name', 'Unnamed')}",
+                value=f"{field.get('value', '-')[:1024]}\nInline: {'Yes' if field.get('inline') else 'No'}",
+                inline=False,
+            )
+        return embed
+
+    async def _select_field(self, interaction: commands.Context):
+        value = self.field_select.values[0]
+        if value == 'none':
+            await interaction.response.defer()
+            return
+        self.selected_index = int(value)
+        await interaction.response.edit_message(
+            content=f"Selected field **{self.selected_index + 1}**.",
+            embed=self._summary(),
+            view=self,
+        )
+
+    async def commit(self, interaction: commands.Context):
+        if len(self.fields) > 25:
+            self.fields = self.fields[:25]
+        await self.on_change(self.fields)
+        self.field_select.options = self._options()
+        self.field_select.disabled = not self.fields
+        self.selected_index = None
+        await interaction.response.edit_message(content=None, embed=self._summary(), view=self)
+
+    @discord.ui.button(label='➕ Add Field', style=discord.ButtonStyle.success, row=1)
+    async def add_field(self, interaction: commands.Context, button: discord.ui.Button):
+        if len(self.fields) >= 25:
+            await interaction.response.send_message('❌ An embed can contain at most 25 fields.', ephemeral=True)
+            return
+        await interaction.response.send_modal(FieldValueModal(self))
+
+    @discord.ui.button(label='✏️ Edit Selected', style=discord.ButtonStyle.primary, row=1)
+    async def edit_field(self, interaction: commands.Context, button: discord.ui.Button):
+        if self.selected_index is None or self.selected_index >= len(self.fields):
+            await interaction.response.send_message('❌ Select a field first.', ephemeral=True)
+            return
+        await interaction.response.send_modal(FieldValueModal(self, self.selected_index))
+
+    @discord.ui.button(label='🗑️ Remove Selected', style=discord.ButtonStyle.danger, row=1)
+    async def remove_field(self, interaction: commands.Context, button: discord.ui.Button):
+        if self.selected_index is None or self.selected_index >= len(self.fields):
+            await interaction.response.send_message('❌ Select a field first.', ephemeral=True)
+            return
+        self.fields.pop(self.selected_index)
+        await self.commit(interaction)
+
+    @discord.ui.button(label='🧹 Clear All', style=discord.ButtonStyle.secondary, row=2)
+    async def clear_fields(self, interaction: commands.Context, button: discord.ui.Button):
+        self.fields.clear()
+        await self.commit(interaction)
+
+
 class EmbedBuilderView(discord.ui.View):
     def __init__(self, target_channel: discord.TextChannel | discord.Thread, 
                  target_message: Optional[discord.Message] = None,
@@ -195,6 +322,15 @@ class EmbedBuilderView(discord.ui.View):
     async def edit_preview(self, interaction: commands.Context):
         await interaction.response.edit_message(embed=await self.get_preview_embed(), view=self)
 
+    async def _replace_fields(self, fields: list[dict]):
+        self.preview_embed.clear_fields()
+        for field in fields[:25]:
+            self.preview_embed.add_field(
+                name=field['name'],
+                value=field['value'],
+                inline=bool(field.get('inline', False)),
+            )
+
     @discord.ui.button(label="📝 Basic Info", style=discord.ButtonStyle.secondary, row=0)
     async def btn_basic(self, interaction: commands.Context, button: discord.ui.Button):
         await interaction.response.send_modal(BasicInfoModal(self))
@@ -207,12 +343,17 @@ class EmbedBuilderView(discord.ui.View):
     async def btn_images(self, interaction: commands.Context, button: discord.ui.Button):
         await interaction.response.send_modal(ImagesModal(self))
 
-    @discord.ui.button(label="➕ Add Field", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="🧩 Edit Fields", style=discord.ButtonStyle.primary, row=1)
     async def btn_add_field(self, interaction: commands.Context, button: discord.ui.Button):
-        if len(self.preview_embed.fields) >= 25:
-            await interaction.send("Embeds can have a maximum of 25 fields.", ephemeral=True)
-            return
-        await interaction.response.send_modal(AddFieldModal(self))
+        fields = self.preview_embed.to_dict().get('fields', [])
+        async def on_change(updated_fields: list[dict]):
+            await self._replace_fields(updated_fields)
+        field_view = EmbedFieldEditorView(fields, on_change)
+        await interaction.response.send_message(
+            embed=field_view._summary(),
+            view=field_view,
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="🗑️ Clear Fields", style=discord.ButtonStyle.danger, row=1)
     async def btn_clear_fields(self, interaction: commands.Context, button: discord.ui.Button):

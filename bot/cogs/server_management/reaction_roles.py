@@ -14,7 +14,8 @@ from discord.ext import commands
 from discord.ext import commands
 
 from core import database_pg as db
-from utils.embeds import get_guild_color
+from cogs.utilities.embed_builder import EmbedFieldEditorView
+from utils.embeds import get_guild_color, normalize_embed_fields
 
 logger = logging.getLogger(__name__)
 
@@ -815,6 +816,12 @@ class DashboardEditorView(discord.ui.View):
             except Exception:
                 pass
         embed.set_footer(text="👁️ Preview of your Role Message")
+        for field in normalize_embed_fields(self.panel.get('embed_fields')):
+            embed.add_field(
+                name=field['name'],
+                value=field['value'][:1024],
+                inline=bool(field.get('inline', False)),
+            )
         return embed
 
     async def apply_update(self, **kwargs):
@@ -850,6 +857,16 @@ class DashboardEditorView(discord.ui.View):
                         await msg.edit(embed=live_embed, view=live_view, attachments=live_attachments)
                     except Exception:
                         pass
+
+    async def refresh_preview_message(self, interaction: commands.Context):
+        """Refresh the separate live preview after a field edit."""
+        if not getattr(self, 'preview_message', None):
+            return
+        await self.fetch_state()
+        preview_view = DynamicRoleView(self.panel, self.entries, interaction.guild)
+        preview_embed = await self._build_preview_embed()
+        preview_embed.set_footer(text=None)
+        await self.preview_message.edit(embed=preview_embed, view=preview_view)
 
     # 1. Row 0
     @discord.ui.button(label="Add Slot", style=discord.ButtonStyle.primary, row=0)
@@ -926,6 +943,25 @@ class DashboardEditorView(discord.ui.View):
     @discord.ui.button(label="Adjust Text/Image/Color", style=discord.ButtonStyle.secondary, row=0)
     async def btn_adjust_text(self, interaction: commands.Context, btn: discord.ui.Button):
         await interaction.response.send_modal(TextEditorModal(self))
+
+    @discord.ui.button(label="🧩 Edit Fields", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_edit_fields(self, interaction: commands.Context, btn: discord.ui.Button):
+        async def on_change(fields: list[dict]):
+            await db.update_reaction_role_message(
+                self.message_id,
+                embed_fields=fields,
+            )
+            await self.refresh_preview_message(interaction)
+
+        field_view = EmbedFieldEditorView(
+            normalize_embed_fields(self.panel.get('embed_fields')),
+            on_change,
+        )
+        await interaction.response.send_message(
+            embed=field_view._summary(),
+            view=field_view,
+            ephemeral=True,
+        )
 
     # 2. Row 1 (Settings Select Menu)
     @discord.ui.select(
@@ -1144,6 +1180,13 @@ class ReactionRolesCog(commands.Cog):
                     embed.set_image(url=f"attachment://{hosted_file.filename}")
                 else:
                     logger.warning("Failed to rehost reaction role image for panel %s: %s", panel.get('message_id'), image_error)
+
+        for field in normalize_embed_fields(panel.get('embed_fields')):
+            embed.add_field(
+                name=field['name'],
+                value=field['value'][:1024],
+                inline=bool(field.get('inline', False)),
+            )
 
         return embed, attachments
 

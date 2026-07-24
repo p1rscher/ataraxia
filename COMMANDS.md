@@ -464,6 +464,21 @@ View admin statistics (command usage, top users, etc.).
 
 ## 🔧 Utility
 
+### `/triggerembed` - Trigger-Embeds
+
+Administratoren können frei konfigurierbare Nachrichten mit Text **außerhalb des Embeds** und einem optionalen Embed erstellen. Beim Schreiben eines exakten Trigger-Wortes wird beides automatisch im aktuellen Kanal gesendet.
+
+- `/triggerembed create trigger:.partnership` - öffnet den visuellen Embed-Builder
+- `/triggerembed edit trigger:.partnership` - bearbeitet das bestehende Embed
+- `/triggerembed list` - listet alle Trigger-Embeds auf
+- `/triggerembed delete trigger:.partnership` - entfernt ein Trigger-Embed
+
+Der Editor verwendet exakt das Dashboard- und Vorschau-Prinzip von `/welcome dashboard` und den Traffic-Embeds. Der Button **Edit Trigger Text** konfiguriert sowohl den Text außerhalb des Embeds als auch Titel und Beschreibung des Embeds. Zusätzlich können Autor, Footer, Bilder, Felder und Zeitstempel angepasst werden.
+
+Alle Embed-Editoren verwenden denselben Feld-Editor. Über **Edit Fields** können mehrere Felder hinzugefügt, ausgewählt bearbeitet, entfernt oder vollständig geleert werden. Ein Footer-Icon kann außerdem ohne Footer-Text gespeichert werden.
+
+Das Trigger-Wort muss als eigenes whitespace-getrenntes Token vorkommen. Dadurch löst `.partnership` nicht versehentlich bei `.partnerships` aus.
+
 ### `/steal` - Copy a Custom Emoji or Sticker
 
 **`/steal [message_id] [name]`** 🟠
