@@ -340,6 +340,12 @@ Calculate a math expression.
 
 ## ⚙️ Configuration
 
+### Reaction-Role-Panel-Farben
+
+Jedes Reaction-Role-Panel besitzt eine eigene Embed-Farbe. Beim Erstellen oder Bearbeiten eines Panels kann sie im Dialog **Adjust Text/Image** über `Embed Color (Hex)` gesetzt werden, zum Beispiel `#FF00AA`.
+
+Die Farbe wird nur für dieses Panel gespeichert und beeinflusst weder Welcome- noch andere Embeds.
+
 ### `/settings color` - Individual Embed Colors
 
 **`/settings color set [hex_color] [type]`** 🟠

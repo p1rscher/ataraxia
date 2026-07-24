@@ -222,6 +222,7 @@ async def init_db():
                 title TEXT NOT NULL,
                 description TEXT,
                 image_url TEXT,
+                embed_color INTEGER NOT NULL DEFAULT 5793266,
                 role_removal BOOLEAN DEFAULT TRUE,
                 multiple_slots BOOLEAN DEFAULT TRUE,
                 include_overview BOOLEAN DEFAULT FALSE,
@@ -236,6 +237,7 @@ async def init_db():
         # Hot-patch schema in case the tables were created before this module update
         try:
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN image_url TEXT")
+            await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN embed_color INTEGER NOT NULL DEFAULT 5793266")
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN role_removal BOOLEAN DEFAULT TRUE")
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN multiple_slots BOOLEAN DEFAULT TRUE")
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN include_overview BOOLEAN DEFAULT FALSE")
@@ -244,6 +246,14 @@ async def init_db():
             await conn.execute("ALTER TABLE reaction_role_messages ADD COLUMN required_role_id BIGINT")
         except asyncpg.exceptions.DuplicateColumnError:
             pass
+
+        try:
+            await conn.execute(
+                "ALTER TABLE reaction_role_messages "
+                "ADD COLUMN IF NOT EXISTS embed_color INTEGER NOT NULL DEFAULT 5793266"
+            )
+        except Exception as exc:
+            logger.warning("Could not migrate reaction-role embed_color: %s", exc)
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS reaction_role_entries (

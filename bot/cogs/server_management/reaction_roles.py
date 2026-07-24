@@ -574,6 +574,12 @@ class TextEditorModal(discord.ui.Modal, title="Edit Panel Output"):
     p_title = discord.ui.TextInput(label="Title", max_length=256, required=False)
     p_desc = discord.ui.TextInput(label="Description", style=discord.TextStyle.paragraph, required=False, max_length=2000)
     p_img = discord.ui.TextInput(label="Image URL (Optional)", required=False, placeholder="https://...")
+    p_color = discord.ui.TextInput(
+        label="Embed Color (Hex)",
+        required=False,
+        max_length=7,
+        placeholder="#5865F2",
+    )
 
     def __init__(self, editor_view: "DashboardEditorView"):
         super().__init__()
@@ -581,11 +587,14 @@ class TextEditorModal(discord.ui.Modal, title="Edit Panel Output"):
         self.p_title.default = self.editor_view.panel.get('title') or ""
         self.p_desc.default = self.editor_view.panel.get('description') or ""
         self.p_img.default = self.editor_view.panel.get('image_url') or ""
+        embed_color = self.editor_view.panel.get('embed_color', 0x5865F2)
+        self.p_color.default = f"#{int(embed_color):06X}"
 
     async def on_submit(self, interaction: commands.Context):
         title_val = str(self.p_title).strip()
         desc_val = str(self.p_desc).strip()
         raw_image_url = str(self.p_img).strip()
+        raw_color = str(self.p_color).strip()
         image_val = None
 
         if raw_image_url:
@@ -605,12 +614,28 @@ class TextEditorModal(discord.ui.Modal, title="Edit Panel Output"):
                 ephemeral=True,
             )
             return
+
+        color_val = self.editor_view.panel.get('embed_color', 0x5865F2)
+        if raw_color:
+            try:
+                color_hex = raw_color.lstrip('#')
+                if len(color_hex) != 6:
+                    raise ValueError
+                color_val = int(color_hex, 16)
+            except ValueError:
+                await _safe_send(
+                    interaction,
+                    "Invalid embed color. Use a hex value such as `#5865F2`.",
+                    ephemeral=True,
+                )
+                return
             
         await db.update_reaction_role_message(
             self.editor_view.message_id,
             title=title_val if title_val else "",
             description=desc_val if desc_val else None,
-            image_url=image_val
+            image_url=image_val,
+            embed_color=color_val,
         )
         await self.editor_view.refresh(interaction)
 
@@ -743,6 +768,11 @@ class DashboardEditorView(discord.ui.View):
         desc_val = self.panel.get('description')
         emb.add_field(name="Description", value=f"```\n{desc_val[:50] + '...' if desc_val and len(desc_val) > 50 else (desc_val or '<Not Set>')}\n```", inline=True)
         emb.add_field(name="Includes Image", value="🟢 On" if self.panel.get('image_url') else "⚫ Off", inline=True)
+        emb.add_field(
+            name="Embed Color",
+            value=f"`#{int(self.panel.get('embed_color', 0x5865F2)):06X}`",
+            inline=True,
+        )
         
         # Slots
         slot_text = []
@@ -777,7 +807,7 @@ class DashboardEditorView(discord.ui.View):
         embed = discord.Embed(
             title=(self.panel.get('title') or None),
             description=(desc or None),
-            color=await get_guild_color(self.panel['guild_id'])
+            color=discord.Color(self.panel.get('embed_color', 0x5865F2))
         )
         if self.panel.get('image_url'):
             try:
@@ -893,7 +923,7 @@ class DashboardEditorView(discord.ui.View):
                 
         await _safe_send(interaction, "Select the mapping to edit.", view=EditSelectView(self), ephemeral=True)
 
-    @discord.ui.button(label="Adjust Text/Image", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Adjust Text/Image/Color", style=discord.ButtonStyle.secondary, row=0)
     async def btn_adjust_text(self, interaction: commands.Context, btn: discord.ui.Button):
         await interaction.response.send_modal(TextEditorModal(self))
 
@@ -1098,7 +1128,7 @@ class ReactionRolesCog(commands.Cog):
         embed = discord.Embed(
             title=(panel.get('title') or None),
             description=(desc or None),
-            color=await get_guild_color(panel['guild_id'])
+            color=discord.Color(panel.get('embed_color', 0x5865F2))
         )
 
         attachments = []
