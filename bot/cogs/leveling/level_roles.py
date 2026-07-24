@@ -171,6 +171,7 @@ class LevelRolesCog(commands.Cog):
             return
         
         try:
+            await self.bot.leveling_cache.flush_pending()
             leaderboard_data = await self.bot.db.get_leaderboard(interaction.guild.id, limit)
             
             if not leaderboard_data:
@@ -206,7 +207,7 @@ class LevelRolesCog(commands.Cog):
         target = user or interaction.author
         
         try:
-            level_data = await self.bot.db.get_level(target.id, interaction.guild.id)
+            level_data = await self.bot.leveling_cache.get_level(target.id, interaction.guild.id)
             
             if not level_data:
                 await interaction.send(
@@ -230,6 +231,7 @@ class LevelRolesCog(commands.Cog):
             progress_percentage = (xp_in_level / xp_needed_in_level) * 100 if xp_needed_in_level > 0 else 0
             
             # Get rank
+            await self.bot.leveling_cache.flush_pending()
             leaderboard = await self.bot.db.get_leaderboard(interaction.guild.id, 1000)
             rank = None
             for idx, (uid, _, _) in enumerate(leaderboard, start=1):
@@ -272,7 +274,7 @@ class LevelRolesCog(commands.Cog):
         """Internal method to sync roles for a single user"""
         try:
             # Get user's current level
-            level_data = await self.bot.db.get_level(member.id, guild.id)
+            level_data = await self.bot.leveling_cache.get_level(member.id, guild.id)
             if not level_data:
                 return
             

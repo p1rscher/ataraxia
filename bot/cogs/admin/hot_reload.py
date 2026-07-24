@@ -88,16 +88,26 @@ class HotReloadCog(commands.Cog):
         color = discord.Color.green() if not failed else discord.Color.orange()
         embed = discord.Embed(title="🔄 Hot Reload", color=color)
 
+        def _safe_join(items: list[str], max_len: int = 1000) -> str:
+            result = ""
+            for i, item in enumerate(items):
+                line = f"{item}\n"
+                if len(result) + len(line) > max_len:
+                    result += f"... and {len(items) - i} more"
+                    break
+                result += line
+            return result.strip()
+
         if reloaded:
             embed.add_field(
                 name=f"✅ Reloaded ({len(reloaded)})",
-                value="\n".join(f"`{e}`" for e in reloaded),
+                value=_safe_join([f"`{e}`" for e in reloaded]),
                 inline=False,
             )
         if newly_loaded:
             embed.add_field(
                 name=f"🆕 Newly Loaded ({len(newly_loaded)})",
-                value="\n".join(f"`{e}`" for e in newly_loaded),
+                value=_safe_join([f"`{e}`" for e in newly_loaded]),
                 inline=False,
             )
         if synced_count is not None:
@@ -107,11 +117,10 @@ class HotReloadCog(commands.Cog):
                 inline=True,
             )
         if failed:
-            # Truncate long error messages so the embed stays readable
-            lines = [f[:120] for f in failed[:10]]
+            lines = [f[:120] for f in failed]
             embed.add_field(
                 name=f"❌ Failed ({len(failed)})",
-                value="\n".join(lines),
+                value=_safe_join(lines),
                 inline=False,
             )
 

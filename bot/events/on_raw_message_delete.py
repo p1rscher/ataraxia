@@ -29,16 +29,16 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
     # Try to get message from DB
     message_row = None
     try:
-        message_row = await db.get_message(payload.message_id)
+        message_row = await bot.message_cache.get_message(payload.message_id)
     except Exception as e:
-        logger.error(f"db.get_message failed: {e}")
+        logger.error(f"message_cache.get_message failed: {e}")
         return
     
     if not message_row:
         # Silently skip if message not in database (e.g. bot messages, messages before bot joined)
         return
     
-    await db.mark_message_deleted(payload.message_id)
+    await bot.message_cache.mark_deleted(payload.message_id)
 
     # Create embed
     embed = await make_delete_embed_from_db(message_row, channel_mention)

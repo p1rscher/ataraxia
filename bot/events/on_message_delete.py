@@ -39,7 +39,7 @@ async def on_message_delete(message: discord.Message):
                     target_channel = None
     
     try:
-        await db.mark_message_deleted(message.id)
+        await bot.message_cache.mark_deleted(message.id)
     except Exception as e:
         print("Failed to mark message as deleted:", e)
 

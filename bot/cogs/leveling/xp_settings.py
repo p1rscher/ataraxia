@@ -10,9 +10,18 @@ class XPSettingsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.hybrid_group(name="xp", description="Manage XP settings")
+    def _invalidate_leveling_settings(self, guild_id: int):
+        if hasattr(self.bot, 'leveling_cache'):
+            self.bot.leveling_cache.invalidate_guild_settings(guild_id)
+
+    def _invalidate_leveling_multipliers(self, guild_id: int):
+        if hasattr(self.bot, 'leveling_cache'):
+            self.bot.leveling_cache.invalidate_multiplier_cache(guild_id)
+
+    @commands.hybrid_group(name="xp", description="[ADMIN] Manage server XP settings and user levels")
     async def xp_group(self, ctx: commands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await ctx.send("ℹ️ The `/xp` command suite is only available for administrators to manage leveling settings and user levels.", ephemeral=True)
 
     @xp_group.command(name="cooldown", description="Set the XP cooldown for messages")
     @app_commands.describe(seconds="Cooldown in seconds between XP gains from messages (default: 60)")
@@ -28,6 +37,7 @@ class XPSettingsCog(commands.Cog):
             return
         
         await db.set_xp_cooldown(interaction.guild.id, seconds)
+        self._invalidate_leveling_settings(interaction.guild.id)
         
         if seconds == 0:
             await interaction.send(
@@ -64,6 +74,7 @@ class XPSettingsCog(commands.Cog):
             return
         
         await db.set_voice_xp_interval(interaction.guild.id, seconds)
+        self._invalidate_leveling_settings(interaction.guild.id)
         
         minutes = seconds // 60
         remaining_seconds = seconds % 60
@@ -101,6 +112,7 @@ class XPSettingsCog(commands.Cog):
             return
         
         await db.set_message_xp_range(interaction.guild.id, min_xp, max_xp)
+        self._invalidate_leveling_settings(interaction.guild.id)
         await interaction.send(
             f"✅ Message XP set to **{min_xp}-{max_xp}** XP per message.",
             ephemeral=True
@@ -127,6 +139,7 @@ class XPSettingsCog(commands.Cog):
             return
         
         await db.set_voice_xp_range(interaction.guild.id, min_xp, max_xp)
+        self._invalidate_leveling_settings(interaction.guild.id)
         await interaction.send(
             f"✅ Voice XP set to **{min_xp}-{max_xp}** XP per interval.",
             ephemeral=True
@@ -224,6 +237,7 @@ class XPSettingsCog(commands.Cog):
             return
         
         await db.set_channel_multiplier(interaction.guild.id, channel.id, multiplier)
+        self._invalidate_leveling_multipliers(interaction.guild.id)
         await interaction.send(
             f"✅ Set XP multiplier for {channel.mention} to **{multiplier}x**",
             ephemeral=True
@@ -235,6 +249,7 @@ class XPSettingsCog(commands.Cog):
     @commands.guild_only()
     async def remove_channel_mult(self, interaction: commands.Context, channel: discord.abc.GuildChannel):
         await db.remove_channel_multiplier(interaction.guild.id, channel.id)
+        self._invalidate_leveling_multipliers(interaction.guild.id)
         await interaction.send(
             f"✅ Removed XP multiplier from {channel.mention}",
             ephemeral=True
@@ -257,6 +272,7 @@ class XPSettingsCog(commands.Cog):
             return
         
         await db.set_role_multiplier(interaction.guild.id, role.id, multiplier)
+        self._invalidate_leveling_multipliers(interaction.guild.id)
         await interaction.send(
             f"✅ Set XP multiplier for {role.mention} to **{multiplier}x**",
             ephemeral=True
@@ -268,6 +284,7 @@ class XPSettingsCog(commands.Cog):
     @commands.guild_only()
     async def remove_role_mult(self, interaction: commands.Context, role: discord.Role):
         await db.remove_role_multiplier(interaction.guild.id, role.id)
+        self._invalidate_leveling_multipliers(interaction.guild.id)
         await interaction.send(
             f"✅ Removed XP multiplier from {role.mention}",
             ephemeral=True
@@ -341,15 +358,11 @@ class XPSettingsCog(commands.Cog):
             else:
                 break
                 
-        await db.set_xp_and_level(user.id, guild.id, current_xp, level)
+        await self.bot.leveling_cache.set_xp_and_level(user.id, guild.id, current_xp, level)
         await handle_level_roles(guild, user, level)
         return level
 
-    @commands.hybrid_group(name="xpadm", description="[PREMIUM] Admin commands to manage user XP")
-    async def admin_group(self, ctx: commands.Context):
-        pass
-
-    @admin_group.command(name="add", description="[PREMIUM] Add XP to a user")
+    @xp_group.command(name="add", description="[PREMIUM] Add XP to a user")
     @app_commands.describe(user="The user to add XP to", amount="XP amount")
     @commands.has_permissions(administrator=True)
     @commands.guild_only()
@@ -360,14 +373,14 @@ class XPSettingsCog(commands.Cog):
             return await interaction.send("❌ Amount must be positive.", ephemeral=True)
             
         await interaction.defer(ephemeral=True)
-        level_data = await db.get_level(user.id, interaction.guild.id)
+        level_data = await self.bot.leveling_cache.get_level(user.id, interaction.guild.id)
         current_xp = level_data['xp'] if level_data else 0
         
         new_xp = current_xp + amount
         new_level = await self._recalculate_user(user, interaction.guild, new_xp)
         await interaction.send(f"✅ Added {amount} XP to {user.mention}. They are now Level **{new_level}**.")
 
-    @admin_group.command(name="remove", description="[PREMIUM] Remove XP from a user")
+    @xp_group.command(name="remove", description="[PREMIUM] Remove XP from a user")
     @app_commands.describe(user="The user to remove XP from", amount="XP amount")
     @commands.has_permissions(administrator=True)
     @commands.guild_only()
@@ -378,14 +391,14 @@ class XPSettingsCog(commands.Cog):
             return await interaction.send("❌ Amount must be positive.", ephemeral=True)
             
         await interaction.defer(ephemeral=True)
-        level_data = await db.get_level(user.id, interaction.guild.id)
+        level_data = await self.bot.leveling_cache.get_level(user.id, interaction.guild.id)
         current_xp = level_data['xp'] if level_data else 0
         
         new_xp = max(0, current_xp - amount)
         new_level = await self._recalculate_user(user, interaction.guild, new_xp)
         await interaction.send(f"✅ Removed {amount} XP from {user.mention}. They are now Level **{new_level}**.")
 
-    @admin_group.command(name="setlevel", description="[PREMIUM] Set a user to a specific level (up or down)")
+    @xp_group.command(name="setlevel", description="[PREMIUM] Set a user to a specific level (up or down)")
     @app_commands.describe(user="The target user", level="Level to set the user to")
     @commands.has_permissions(administrator=True)
     @commands.guild_only()
@@ -401,12 +414,12 @@ class XPSettingsCog(commands.Cog):
         # Determine base XP required for that level to avoid broken leveling later
         new_xp = await calculate_xp_needed(level) if level > 0 else 0
         
-        await db.set_xp_and_level(user.id, interaction.guild.id, new_xp, level)
+        await self.bot.leveling_cache.set_xp_and_level(user.id, interaction.guild.id, new_xp, level)
         await handle_level_roles(interaction.guild, user, level)
         
         await interaction.send(f"✅ Set {user.mention} to Level **{level}**.")
 
-    @admin_group.command(name="transfer", description="[PREMIUM] Transfer XP from one user to another")
+    @xp_group.command(name="transfer", description="[PREMIUM] Transfer XP from one user to another")
     @app_commands.describe(from_user="User to take XP from", to_user="User to give XP to", amount="XP amount to transfer")
     @commands.has_permissions(administrator=True)
     @commands.guild_only()
@@ -418,13 +431,13 @@ class XPSettingsCog(commands.Cog):
             
         await interaction.defer(ephemeral=True)
         
-        from_level_data = await db.get_level(from_user.id, interaction.guild.id)
+        from_level_data = await self.bot.leveling_cache.get_level(from_user.id, interaction.guild.id)
         from_xp = from_level_data['xp'] if from_level_data else 0
         
         if from_xp < amount:
             return await interaction.send(f"❌ {from_user.mention} only has **{from_xp}** XP! Cannot transfer {amount} XP.")
             
-        to_level_data = await db.get_level(to_user.id, interaction.guild.id)
+        to_level_data = await self.bot.leveling_cache.get_level(to_user.id, interaction.guild.id)
         to_xp = to_level_data['xp'] if to_level_data else 0
         
         new_from_xp = max(0, from_xp - amount)

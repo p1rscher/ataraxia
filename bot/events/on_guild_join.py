@@ -14,6 +14,48 @@ async def on_guild_join(guild: discord.Guild):
     """Wird getriggert wenn der Bot einem neuen Server beitritt"""
     logger.info(f"Bot joined new guild: {guild.name} (ID: {guild.id})")
 
+    from core import database_pg as db
+    try:
+        await db.upsert_server(guild)
+        logger.info(f"Upserted new guild {guild.name} into database.")
+    except Exception as e:
+        logger.error(f"Failed to upsert new guild {guild.name} to DB: {e}")
+
+    # Send Introduction Message
+    try:
+        channel = None
+        if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
+            channel = guild.system_channel
+        else:
+            keywords = ['general', 'chat', 'main', 'welcome', 'lounge']
+            for c in guild.text_channels:
+                if c.permissions_for(guild.me).send_messages:
+                    if any(k in c.name.lower() for k in keywords):
+                        channel = c
+                        break
+            if not channel:
+                for c in guild.text_channels:
+                    if c.permissions_for(guild.me).send_messages:
+                        channel = c
+                        break
+                        
+        if channel:
+            embed = discord.Embed(
+                title="🌸 Thanks for adding Ataraxia!",
+                description=(
+                    f"Hi there! I'm **Ataraxia**, your all-in-one server management, moderation, and community bot.\n\n"
+                    "**To get started flawlessly, I highly recommend running:**\n"
+                    "`/quicksetup`\n\n"
+                    "This interactive wizard will help you configure everything from Logging and Welcome Messages to Auto-Roles and Support Tickets in just a few clicks!\n\n"
+                    "For a full list of my commands, try `/help` or visit [ataraxia-bot.com](https://ataraxia-bot.com)."
+                ),
+                color=discord.Color.from_rgb(255, 153, 204)
+            )
+            await channel.send(embed=embed)
+            logger.info(f"Sent introduction message to {guild.name} in #{channel.name}")
+    except Exception as e:
+        logger.error(f"Failed to send intro message to {guild.name}: {e}")
+
     await asyncio.sleep(20)
     
     # Backfill messages from all channels

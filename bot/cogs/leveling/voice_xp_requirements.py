@@ -21,6 +21,10 @@ class VoiceXPRequirements(commands.Cog):
     
     def __init__(self, bot):
         self.bot = bot
+
+    def _invalidate_voice_requirements(self, guild_id: int):
+        if hasattr(self.bot, 'leveling_cache'):
+            self.bot.leveling_cache.invalidate_guild_settings(guild_id)
     
     # Group for voice XP requirement commands
     @commands.hybrid_group(
@@ -35,7 +39,7 @@ class VoiceXPRequirements(commands.Cog):
     async def view_requirements(self, interaction: commands.Context):
         """View current Voice XP requirements for the server"""
         
-        requirements = await db.get_voice_xp_requirements(interaction.guild.id)
+        requirements = await self.bot.leveling_cache.get_voice_requirements(interaction.guild.id)
         
         embed = discord.Embed(
             title="🎤 Voice XP Requirements",
@@ -83,6 +87,7 @@ class VoiceXPRequirements(commands.Cog):
         require_non_afk = not allow
         
         await db.set_voice_xp_requirement(interaction.guild.id, 'require_non_afk', require_non_afk)
+        self._invalidate_voice_requirements(interaction.guild.id)
         
         status = "❌ will NOT earn" if require_non_afk else "✅ will earn"
         
@@ -106,6 +111,7 @@ class VoiceXPRequirements(commands.Cog):
         require_non_deaf = not allow
         
         await db.set_voice_xp_requirement(interaction.guild.id, 'require_non_deaf', require_non_deaf)
+        self._invalidate_voice_requirements(interaction.guild.id)
         
         status = "❌ will NOT earn" if require_non_deaf else "✅ will earn"
         
@@ -129,6 +135,7 @@ class VoiceXPRequirements(commands.Cog):
         require_non_muted = not allow
         
         await db.set_voice_xp_requirement(interaction.guild.id, 'require_non_muted', require_non_muted)
+        self._invalidate_voice_requirements(interaction.guild.id)
         
         status = "❌ will NOT earn" if require_non_muted else "✅ will earn"
         
@@ -152,6 +159,7 @@ class VoiceXPRequirements(commands.Cog):
         require_others_in_channel = not allow
         
         await db.set_voice_xp_requirement(interaction.guild.id, 'require_others_in_channel', require_others_in_channel)
+        self._invalidate_voice_requirements(interaction.guild.id)
         
         status = "✅ will earn" if not require_others_in_channel else "❌ will NOT earn"
         
@@ -176,6 +184,7 @@ class VoiceXPRequirements(commands.Cog):
             require_non_muted=False,
             require_others_in_channel=True
         )
+        self._invalidate_voice_requirements(interaction.guild.id)
         
         embed = discord.Embed(
             title="✅ Voice XP Requirements Reset",

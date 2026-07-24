@@ -4,6 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 import logging
 from typing import Optional
+from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +239,7 @@ class EmbedBuilderCog(commands.Cog):
         initial_embed = discord.Embed(
             title="Your New Embed",
             description="Use the buttons below to build your embed.",
-            color=discord.Color.blurple()
+            color=await get_guild_color(interaction.guild.id)
         )
         view = EmbedBuilderView(target_channel=channel, initial_embed=initial_embed)
         await interaction.send(
@@ -271,7 +272,10 @@ class EmbedBuilderCog(commands.Cog):
             return await interaction.send("❌ I can only edit my own messages.", ephemeral=True)
             
         if not target_msg.embeds:
-            initial_embed = discord.Embed(title="New Embed")
+            initial_embed = discord.Embed(
+                title="New Embed",
+                color=await get_guild_color(interaction.guild.id)
+            )
         else:
             initial_embed = target_msg.embeds[0]
             

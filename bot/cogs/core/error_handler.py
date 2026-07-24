@@ -29,14 +29,80 @@ class ErrorHandler(commands.Cog):
         except ValueError:
             return None
 
-    async def log_to_channel(self, exception_msg: str, context: str, is_fatal: bool = True):
+    def _extract_guild_and_user(self, *args, **kwargs):
+        guild = None
+        user = None
+        
+        def check_obj(obj):
+            nonlocal guild, user
+            if not obj:
+                return
+            
+            # Check interaction
+            if isinstance(obj, discord.Interaction):
+                if not guild:
+                    guild = obj.guild
+                if not user:
+                    user = obj.user
+                return
+                    
+            # Check Context
+            if isinstance(obj, commands.Context):
+                if not guild:
+                    guild = obj.guild
+                if not user:
+                    user = obj.author
+                return
+
+            # Check direct types
+            if isinstance(obj, discord.Guild) and not guild:
+                guild = obj
+            if isinstance(obj, (discord.User, discord.Member)) and not user:
+                user = obj
+            
+            # Check properties/attributes
+            if not guild and hasattr(obj, 'guild'):
+                guild = getattr(obj, 'guild', None)
+            if not user and hasattr(obj, 'author'):
+                user = getattr(obj, 'author', None)
+            if not user and hasattr(obj, 'user'):
+                user = getattr(obj, 'user', None)
+
+            # Check guild_id / user_id
+            if not guild:
+                g_id = getattr(obj, 'guild_id', None)
+                if g_id:
+                    guild = self.bot.get_guild(g_id)
+            if not user:
+                u_id = getattr(obj, 'user_id', None) or getattr(obj, 'author_id', None)
+                if u_id:
+                    user = self.bot.get_user(u_id) or self.bot.get_member(u_id)
+
+        for arg in args:
+            check_obj(arg)
+        for val in kwargs.values():
+            check_obj(val)
+            
+        return guild, user
+
+    async def log_to_channel(self, exception_msg: str, context: str, is_fatal: bool = True, guild: discord.Guild = None, user: discord.User = None):
         channel = await self.get_log_channel(is_fatal)
         if not channel:
             return
             
         icon = "⚠️" if is_fatal else "ℹ️"
         severity = "Runtime Error" if is_fatal else "Non-Fatal Warning"
-        header = f"**{icon} {severity} in {context}:**\n"
+        
+        guild_name = guild.name if guild else "N/A"
+        guild_id = str(guild.id) if guild else "N/A"
+        username = user.name if user else "N/A"
+        
+        header = (
+            f"**{icon} {severity} in {context}:**\n"
+            f"**Server Name:** {guild_name}\n"
+            f"**Server ID:** {guild_id}\n"
+            f"**Username:** {username}\n"
+        )
         
         if len(header) + len(exception_msg) + 10 > 2000:
             file = discord.File(io.BytesIO(exception_msg.encode('utf-8')), filename="traceback.py")
@@ -61,9 +127,11 @@ class ErrorHandler(commands.Cog):
         )
         
         ctx_str = f"Slash Command `/{interaction.command.name if interaction.command else 'Unknown'}`"
+        guild = interaction.guild
+        user = interaction.user
         
         if isinstance(error, non_fatal_exceptions):
-            await self.log_to_channel(str(error), ctx_str, is_fatal=False)
+            await self.log_to_channel(str(error), ctx_str, is_fatal=False, guild=guild, user=user)
             msg = str(error)
             # Try to inform the user nicely about timeouts/permissions without throwing a stack trace
             if not interaction.response.is_done():
@@ -86,7 +154,7 @@ class ErrorHandler(commands.Cog):
         tb_lines = traceback.format_exception(type(error), error, error.__traceback__)
         tb_text = ''.join(tb_lines)
         
-        await self.log_to_channel(tb_text, ctx_str, is_fatal=True)
+        await self.log_to_channel(tb_text, ctx_str, is_fatal=True, guild=guild, user=user)
         
         # User feedback
         msg = "An unexpected internal error occurred. Administrators have been notified."
@@ -114,6 +182,8 @@ class ErrorHandler(commands.Cog):
         )
         
         ctx_str = f"Prefix Command `{ctx.command.qualified_name if ctx.command else 'Unknown'}`"
+        guild = ctx.guild
+        user = ctx.author
         
         if hasattr(ctx.command, 'on_error'):
             return  # The command has its own error handler
@@ -131,7 +201,7 @@ class ErrorHandler(commands.Cog):
 
         # Check for non-fatal exceptions prior to expanding
         if isinstance(error, non_fatal_exceptions):
-            await self.log_to_channel(str(error), ctx_str, is_fatal=False)
+            await self.log_to_channel(str(error), ctx_str, is_fatal=False, guild=guild, user=user)
             
             # Send permission/cooldown errors to user
             if getattr(error, 'original', error) is not error:
@@ -150,7 +220,7 @@ class ErrorHandler(commands.Cog):
         tb_lines = traceback.format_exception(type(error), error, error.__traceback__)
         tb_text = ''.join(tb_lines)
         
-        await self.log_to_channel(tb_text, ctx_str, is_fatal=True)
+        await self.log_to_channel(tb_text, ctx_str, is_fatal=True, guild=guild, user=user)
 
     @commands.Cog.listener()
     async def on_error(self, event_method: str, /, *args, **kwargs):
@@ -162,8 +232,9 @@ class ErrorHandler(commands.Cog):
         tb_text = ''.join(tb_lines)
         
         ctx_str = f"Event `{event_method}`"
+        guild, user = self._extract_guild_and_user(*args, **kwargs)
         try:
-            await self.log_to_channel(tb_text, ctx_str, is_fatal=True)
+            await self.log_to_channel(tb_text, ctx_str, is_fatal=True, guild=guild, user=user)
         except Exception:
             # Fallback to standard output if log channel fails heavily during on_error
             traceback.print_exc()

@@ -1,10 +1,13 @@
 # events/on_voice_state_update.py
 import discord
 import logging
+from typing import Optional
 from core import database_pg as db
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+bot: Optional[discord.Client] = None
 
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     """Handle temporary voice channel creation/deletion, voice XP tracking, and voice logs"""
@@ -77,7 +80,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
         # IMPORTANT: If this leaves only one non-bot person in the channel, end their session too
         # (Only if require_others_in_channel is enabled)
         if before.channel:
-            requirements = await db.get_voice_xp_requirements(member.guild.id)
+            requirements = await bot.leveling_cache.get_voice_requirements(member.guild.id)
             non_bot_members = [m for m in before.channel.members if not m.bot]
             
             if requirements['require_others_in_channel'] and len(non_bot_members) == 1:
@@ -94,7 +97,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
         if not (member.guild.afk_channel and after.channel.id == member.guild.afk_channel.id):
             logger.info(f"Voice join detected: {member} joined {after.channel.name}")
             # Get guild-specific voice XP requirements
-            requirements = await db.get_voice_xp_requirements(member.guild.id)
+            requirements = await bot.leveling_cache.get_voice_requirements(member.guild.id)
             logger.info(f"Requirements for guild {member.guild.id}: {requirements}")
             
             # Count non-bot members in the channel

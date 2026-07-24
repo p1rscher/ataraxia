@@ -29,7 +29,7 @@ async def sync_voice_sessions_on_startup(bot):
     
     for guild in bot.guilds:
         # Get voice XP requirements for this guild
-        requirements = await db.get_voice_xp_requirements(guild.id)
+        requirements = await bot.leveling_cache.get_voice_requirements(guild.id)
         
         # Track who SHOULD have sessions
         should_have_session = set()

@@ -23,15 +23,17 @@ logger = logging.getLogger(__name__)
 class CategorySelect(discord.ui.Select):
     """Dropdown for selecting command categories."""
     def __init__(self, categories: List[Tuple[str, str]]):
-        options = [
-            discord.SelectOption(
-                label=display_name,
-                value=cog_name,
-                emoji=display_name.split(" ", 1)[0] if " " in display_name else None,
-                description=f"View commands in {display_name}"
+        options = []
+        for _, display_name in categories:
+            short_desc = display_name.split(" ", 1)[-1] if " " in display_name else display_name
+            options.append(
+                discord.SelectOption(
+                    label=display_name,
+                    value=display_name,
+                    emoji=display_name.split(" ", 1)[0] if " " in display_name else None,
+                    description=f"View commands in {short_desc}"
+                )
             )
-            for cog_name, display_name in categories
-        ]
         super().__init__(
             placeholder="Select a category to explore commands...",
             min_values=1,
@@ -45,7 +47,7 @@ class CategorySelect(discord.ui.Select):
 class HelpView(discord.ui.View):
     """Main view for the interactive help menu."""
     def __init__(self, cog: 'HelpCog', user: discord.User, guild_id: int, color: discord.Color):
-        super().__init__(timeout=600)
+        super().__init__(timeout=60)
         self.cog = cog
         self.user = user
         self.guild_id = guild_id
@@ -56,7 +58,7 @@ class HelpView(discord.ui.View):
         
         # Fetch categorized commands
         self.categorized_commands = self.cog._get_all_commands()
-        self.categories = self.cog._get_category_list(list(self.categorized_commands.keys()))
+        self.categories = self.cog._get_category_list()
         
         # UI Elements
         self.select_menu = CategorySelect(self.categories)
@@ -130,6 +132,7 @@ class HelpCog(commands.Cog):
             "ReactionRoles": "🔐 Interaction Panels",
             "ServerStats": "📊 Server Tools",
             "Settings": "⚙️ System Settings",
+            "SetupWizard": "⚙️ System Settings",
             "TempVoice": "🎙️ Voice Tools",
             "Ticket": "🎫 Ticket System",
             "Welcome": "👋 Welcome Center",
@@ -138,43 +141,51 @@ class HelpCog(commands.Cog):
             "EmbedBuilder": "🎨 Design Tools",
             "Math": "🧮 Advanced Math",
             "Say": "🌸 General",
+            "Quote": "💬 Quotes",
+            "Translator": "🌍 Translation",
             "General": "📌 General Commands"
         }
 
-    def _get_category_list(self, available_cogs: List[str]) -> List[Tuple[str, str]]:
-        """Returns sorted list of (internal_name, display_name) tuples."""
-        cats = []
-        for cog_name in available_cogs:
-            display = self.cog_map.get(cog_name, f"📁 {cog_name}")
-            cats.append((cog_name, display))
+    def _get_category_list(self) -> List[Tuple[str, str]]:
+        """Returns sorted list of (display_name, display_name) tuples."""
+        all_cmds = self._get_all_commands()
+        cats = [(display, display) for display in all_cmds.keys()]
         
         # Sort by display name (emoji first)
         return sorted(cats, key=lambda x: x[1])
 
     def _get_all_commands(self) -> Dict[str, List[app_commands.Command]]:
-        """Groups all bot commands by Cog."""
+        """Groups all bot commands by their UI Display Name."""
         groups = {}
+        lower_map = {k.lower().replace("_", ""): v for k, v in self.cog_map.items()}
         
         # 1. Process Slash Commands from Tree
         for cmd in self.bot.tree.get_commands():
+            cog_name = "General"
             if isinstance(cmd, app_commands.Group):
                 # We prioritize the Cog that owns the group
                 cog_name = cmd.module.split(".")[-1].title() if hasattr(cmd, "module") else "General"
-                if cog_name not in groups: groups[cog_name] = []
                 
+                search_key = cog_name.lower().replace("_", "")
+                if search_key.endswith("cog"): search_key = search_key[:-3]
+                display_name = lower_map.get(search_key, f"📁 {cog_name}")
+                
+                if display_name not in groups: groups[display_name] = []
                 for sub in cmd.commands:
-                    groups[cog_name].append(sub)
+                    groups[display_name].append(sub)
             else:
                 # Top level slash command
-                cog_name = "General"
-                # Check which cog owns it
                 for c_name, c_obj in self.bot.cogs.items():
                     if cmd.name in [a.name for a in c_obj.get_app_commands()]:
                         cog_name = c_name
                         break
+                        
+                search_key = cog_name.lower().replace("_", "")
+                if search_key.endswith("cog"): search_key = search_key[:-3]
+                display_name = lower_map.get(search_key, f"📁 {cog_name}")
                 
-                if cog_name not in groups: groups[cog_name] = []
-                groups[cog_name].append(cmd)
+                if display_name not in groups: groups[display_name] = []
+                groups[display_name].append(cmd)
 
         return groups
 
@@ -201,19 +212,33 @@ class HelpCog(commands.Cog):
         
         # Premium Status
         tier = "Free"
+        subscribed_since = None
+        due_at = None
         if db:
-            tier_raw = await db.get_user_premium_tier(user.id)
-            tier = tier_raw.replace("_", " ").title() if tier_raw else "Free"
+            details = await db.get_user_premium_details(user.id)
+            if details:
+                tier = details['tier'].replace("_", " ").title()
+                subscribed_since = details['activated_at']
+                due_at = details['expires_at']
             
         status_emoji = "💎" if tier != "Free" else "👤"
+        value_str = f"Tier: **{tier}**"
+        if subscribed_since and due_at:
+            since_ts = int(subscribed_since.replace(tzinfo=timezone.utc).timestamp()) if subscribed_since.tzinfo is None else int(subscribed_since.timestamp())
+            due_ts = int(due_at.replace(tzinfo=timezone.utc).timestamp()) if due_at.tzinfo is None else int(due_at.timestamp())
+            value_str += f"\n🗓️ **Subscribed since:** <t:{since_ts}:D>\n⏳ **Due at:** <t:{due_ts}:D> (<t:{due_ts}:R>)"
+        else:
+            value_str += "\nThank you for choosing Ataraxia!"
+
         embed.add_field(
             name=f"{status_emoji} Your Account Status",
-            value=f"Tier: **{tier}**\nThank you for choosing Ataraxia!",
+            value=value_str,
             inline=True
         )
 
         # Bot Stats
-        total_cmds = len(self.bot.tree.get_commands())
+        all_cmds = self._get_all_commands()
+        total_cmds = sum(len(cmds) for cmds in all_cmds.values())
         embed.add_field(
             name="🤖 Global Statistics",
             value=f"Servers: **{len(self.bot.guilds):,}**\nCommands: **{total_cmds}**",
@@ -225,16 +250,17 @@ class HelpCog(commands.Cog):
         
         return embed
 
-    def _build_category_embed(self, cog_name: str, color: discord.Color) -> discord.Embed:
-        display_name = self.cog_map.get(cog_name, f"📁 {cog_name}")
+    def _build_category_embed(self, display_name: str, color: discord.Color) -> discord.Embed:
+        category_title = display_name.split(' ', 1)[-1] if ' ' in display_name else display_name
+        
         embed = discord.Embed(
             title=f"{display_name}",
-            description=f"Showing all commands in the **{cog_name}** module.",
+            description=f"Showing all commands in the **{category_title}** category.",
             color=color
         )
         
         all_cmds = self._get_all_commands()
-        cmds = all_cmds.get(cog_name, [])
+        cmds = all_cmds.get(display_name, [])
         
         if not cmds:
             embed.description = "No commands found in this category."
@@ -242,7 +268,8 @@ class HelpCog(commands.Cog):
 
         cmd_list = []
         for cmd in cmds:
-            desc = cmd.description[:100] if cmd.description else "No description available."
+            desc_attr = getattr(cmd, 'description', '')
+            desc = desc_attr[:100] if desc_attr else "No description available (Context Menu)."
             
             # Premium marking
             prefix = ""
@@ -253,7 +280,11 @@ class HelpCog(commands.Cog):
                 prefix = "✨ "
                 desc = desc.replace("[PREMIUM+]", "").replace("[premium+]", "").strip()
 
-            cmd_list.append(f"**{prefix}`/{cmd.name}`**\n╰ {desc}")
+            cmd_name = cmd.name
+            if hasattr(cmd, 'parent') and cmd.parent:
+                cmd_name = f"{cmd.parent.name} {cmd.name}"
+                
+            cmd_list.append(f"**{prefix}`/{cmd_name}`**\n╰ {desc}")
 
         # Discord field limit is 1024. If list is too long, we split into fields.
         current_chunk = ""

@@ -106,10 +106,14 @@ class ParentRolesCog(commands.Cog):
             await ctx.send(f"❌ Error creating role: {e}", ephemeral=True)
             logger.error(f"Error creating parent role in guild {ctx.guild.id}: {e}")
 
-    @parentrole_group.command(name="addchild", description="Add a child role to a parent role")
+    @parentrole_group.command(name="addchild", description="Add one or more child roles to a parent role")
     @app_commands.describe(
         parent_role="The parent role (category)",
-        child_role="The child role that triggers the parent"
+        child_role_1="The first child role that triggers the parent",
+        child_role_2="Optional second child role",
+        child_role_3="Optional third child role",
+        child_role_4="Optional fourth child role",
+        child_role_5="Optional fifth child role"
     )
     @commands.has_permissions(administrator=True)
     @commands.guild_only()
@@ -117,21 +121,52 @@ class ParentRolesCog(commands.Cog):
         self, 
         ctx: commands.Context, 
         parent_role: discord.Role,
-        child_role: discord.Role
+        child_role_1: discord.Role,
+        child_role_2: discord.Role = None,
+        child_role_3: discord.Role = None,
+        child_role_4: discord.Role = None,
+        child_role_5: discord.Role = None,
     ):
-        """Add a child role to a parent role"""
+        """Add one or more child roles to a parent role."""
         if not ctx.author.guild_permissions.administrator:
             await ctx.send("❌ You need administrator permissions!", ephemeral=True)
             return
-        
-        await db.add_child_to_parent(ctx.guild.id, parent_role.id, child_role.id)
-        
+
+        child_roles = [
+            child_role_1,
+            child_role_2,
+            child_role_3,
+            child_role_4,
+            child_role_5,
+        ]
+        unique_child_roles = []
+        seen_role_ids = set()
+
+        for role in child_roles:
+            if role is None or role.id in seen_role_ids:
+                continue
+            seen_role_ids.add(role.id)
+            unique_child_roles.append(role)
+
+        if parent_role.id in seen_role_ids:
+            await ctx.send("❌ A parent role cannot be its own child role.", ephemeral=True)
+            return
+
+        for child_role in unique_child_roles:
+            await db.add_child_to_parent(ctx.guild.id, parent_role.id, child_role.id)
+
+        child_mentions = ", ".join(role.mention for role in unique_child_roles)
         await ctx.send(
-            f"✅ Added {child_role.mention} as child of {parent_role.mention}\n"
-            f"Members with {child_role.mention} will automatically get {parent_role.mention}",
+            f"✅ Added {child_mentions} as child role(s) of {parent_role.mention}\n"
+            f"Members with those role(s) will automatically get {parent_role.mention}",
             ephemeral=True
         )
-        logger.info(f"Added child role {child_role.name} to parent {parent_role.name} in guild {ctx.guild.id}")
+        logger.info(
+            "Added child roles %s to parent %s in guild %s",
+            [role.name for role in unique_child_roles],
+            parent_role.name,
+            ctx.guild.id,
+        )
 
     @parentrole_group.command(name="removechild", description="Remove a child role from a parent role")
     @app_commands.describe(

@@ -61,32 +61,38 @@ class PremiumCog(commands.Cog):
         embed.add_field(
             name="🆓 Free Tier",
             value=(
-                "• 90s AI cooldown\n"
+                "• **90s AI Cooldown** (20 requests/day)\n"
                 "• 500 token responses\n"
-                "• All basic features"
+                "• 30 daily AI translations (`/tr`)\n"
+                "• Standard features (Economy, Leveling, Tickets, etc.)"
             ),
             inline=False
         )
         
         embed.add_field(
-            name="💎 Premium - $5/month",
+            name="💎 Premium - €3/month",
             value=(
-                "• **30s AI cooldown** (3x faster!)\n"
-                "• 1000 token responses\n"
-                "• Priority support\n"
-                "• Premium badge"
+                "• **30s AI Cooldown** (100 requests/day)\n"
+                "• 1,000 token responses\n"
+                "• 70 daily AI translations (`/tr`)\n"
+                "• Custom Guild Bot Profile (Avatar, Banner, Nick, Bio)\n"
+                "• **1 Custom prefix** (`/settings prefix`)\n"
+                "• **Admin XP controls** (`/xp` commands)\n"
+                "• Premium badge & Priority support"
             ),
             inline=False
         )
         
         embed.add_field(
-            name="👑 Premium+ - $7/month",
+            name="👑 Premium+ - €5/month",
             value=(
-                "• **10s AI cooldown** (9x faster!)\n"
-                "• 2000 token responses\n"
-                "• GPT-4 access (coming soon)\n"
-                "• Custom AI personality\n"
-                "• Early access to new features"
+                "• **10s AI Cooldown** (500 requests/day)\n"
+                "• 2,000 token responses\n"
+                "• 100 daily AI translations (`/tr`)\n"
+                "• **Up to 5 Custom prefixes**\n"
+                "• Custom AI Personality & prompt settings\n"
+                "• GPT-4 access (Coming soon!)\n"
+                "• Early access to brand new features"
             ),
             inline=False
         )
@@ -195,7 +201,7 @@ class PremiumCog(commands.Cog):
             )
             return
 
-        await ctx.defer(ephemeral=True, thinking=True)
+        await ctx.defer(ephemeral=True)
 
         payload = {}
 
@@ -286,7 +292,7 @@ class PremiumCog(commands.Cog):
             await ctx.send("❌ Select at least one field to reset.", ephemeral=True)
             return
 
-        await ctx.defer(ephemeral=True, thinking=True)
+        await ctx.defer(ephemeral=True)
 
         reason = f"Requested by {ctx.author} ({ctx.author.id})"
 
@@ -320,7 +326,7 @@ class PremiumCog(commands.Cog):
             )
             return
 
-        await ctx.defer(ephemeral=True, thinking=True)
+        await ctx.defer(ephemeral=True)
 
         try:
             if not self.bot.user:

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 async def calculate_xp_needed(level: int) -> int:
     """Calculate the XP needed for the given level"""
-    return 15 * (level ** 2) + 60 * level + 25
+    return int((40*(level ** 2) + 60*level) * 1.01**level)
 
 async def check_level_up(user_id: int, guild_id: int, bot: discord.Client, fallback_channel: discord.TextChannel = None):
     """
@@ -23,7 +23,7 @@ async def check_level_up(user_id: int, guild_id: int, bot: discord.Client, fallb
     
     Returns the number of levels gained.
     """
-    level_data = await db.get_level(user_id, guild_id)
+    level_data = await bot.leveling_cache.get_level(user_id, guild_id)
     if not level_data:
         return 0
     
@@ -38,7 +38,7 @@ async def check_level_up(user_id: int, guild_id: int, bot: discord.Client, fallb
         
         if current_xp >= xp_needed:
             # Level up!
-            await db.set_level(user_id, guild_id, new_level)
+            await bot.leveling_cache.set_level(user_id, guild_id, new_level)
             current_level = new_level
             levels_gained += 1
             logger.info(f"User {user_id} leveled up to {new_level} in guild {guild_id}")

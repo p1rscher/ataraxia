@@ -22,7 +22,7 @@ class CountingCog(commands.Cog):
     async def counting_setup(self, interaction: commands.Context, channel: discord.TextChannel):
         """Setup a counting channel"""
         try:
-            await self.bot.db.set_counting_channel(interaction.guild.id, channel.id)
+            await self.bot.counting_cache.set_channel(interaction.guild.id, channel.id)
             
             embed = discord.Embed(
                 title="✅ Counting Channel Setup",
@@ -43,7 +43,7 @@ class CountingCog(commands.Cog):
     async def counting_remove(self, interaction: commands.Context):
         """Remove the counting channel setup"""
         try:
-            await self.bot.db.remove_counting_channel(interaction.guild.id)
+            await self.bot.counting_cache.remove_channel(interaction.guild.id)
             
             embed = discord.Embed(
                 title="✅ Counting Channel Removed",
@@ -60,7 +60,7 @@ class CountingCog(commands.Cog):
     async def counting_status(self, interaction: commands.Context):
         """Check the current counting status"""
         try:
-            settings = await self.bot.db.get_counting_settings(interaction.guild.id)
+            settings = await self.bot.counting_cache.get_settings(interaction.guild.id)
             
             if not settings:
                 await interaction.send("❌ No counting channel has been set up yet.", ephemeral=True)
@@ -100,7 +100,7 @@ class CountingCog(commands.Cog):
     async def counting_reset(self, interaction: commands.Context):
         """Reset the counting channel to 0"""
         try:
-            await self.bot.db.reset_counting(interaction.guild.id)
+            await self.bot.counting_cache.reset(interaction.guild.id)
             
             embed = discord.Embed(
                 title="✅ Counting Reset",
@@ -117,6 +117,7 @@ class CountingCog(commands.Cog):
     async def counting_leaderboard(self, interaction: commands.Context):
         """Show the counting leaderboard"""
         try:
+            await self.bot.counting_cache.flush_pending(guild_id=interaction.guild.id)
             leaderboard = await self.bot.db.get_counting_leaderboard(interaction.guild.id, limit=10)
             
             if not leaderboard:
@@ -155,89 +156,48 @@ class CountingCog(commands.Cog):
             return
         
         try:
-            settings = await self.bot.db.get_counting_settings(message.guild.id)
-            
-            if not settings or settings['channel_id'] != message.channel.id:
-                return
-            
-            current_number = settings['current_number']
-            last_user_id = settings['last_user_id']
-            high_score = settings['high_score']
+            result = await self.bot.counting_cache.process_message(
+                message.guild.id,
+                message.channel.id,
+                message.author.id,
+                message.content,
+            )
 
-            # Try to parse the number
-            try:
-                number = int(message.content.strip())
-            except ValueError:
-                await message.delete()
-                try:
-                    await message.author.send(
-                        f"❌ Only numbers are allowed in the counting channel of {message.guild.name}!\n"
-                        f"Current number: **{current_number}**"
-                    )
-                except:
-                    pass
+            if result.status == "ignore":
                 return
-            
-            # Check if the same user counted twice in a row
-            if last_user_id == message.author.id:
+
+            if result.status == "invalid":
                 await message.delete()
-                try:
-                    await message.author.send(
-                        f"❌ You cannot count twice in a row in {message.guild.name}!\n"
-                        f"Current number: **{current_number}**"
-                    )
-                except:
-                    pass
                 return
-            
-            # Check if it's the correct number
-            expected_number = current_number + 1
-            
-            if number == expected_number:
-                # Correct number!
+
+            if result.status == "same_user":
+                await message.delete()
+                return
+
+            if result.status == "correct":
                 await message.add_reaction("✅")
-                
-                # Update database
-                await self.bot.db.update_counting(
-                    message.guild.id,
-                    new_number=expected_number,
-                    last_user_id=message.author.id
-                )
-                
-                # Update user stats
-                await self.bot.db.increment_user_counting(message.guild.id, message.author.id)
-                
-                # Check for new high score
-                if expected_number > high_score:
-                    await self.bot.db.update_counting_highscore(message.guild.id, expected_number)
-                    
-                    if expected_number % 100 == 0:  # Celebrate every 100
-                        embed = discord.Embed(
-                            title="🎉 New High Score!",
-                            description=f"**{expected_number}** - Well done!",
-                            color=await get_guild_color(message.guild.id, 'color_counting')
-                        )
-                        await message.channel.send(embed=embed)
-                
-            else:
-                # Wrong number!
-                await message.delete()
-                
+                if result.milestone_reached:
+                    embed = discord.Embed(
+                        title="🎉 New Milestone!",
+                        description=f"**{result.current_number}** - Well done!",
+                        color=await get_guild_color(message.guild.id, 'color_counting')
+                    )
+                    await message.channel.send(embed=embed)
+                return
+
+            if result.status == "wrong":
                 embed = discord.Embed(
                     title="❌ Wrong Number!",
                     description=(
-                        f"{message.author.mention} ruined it at **{current_number}**!\n\n"
-                        f"The next number was **{expected_number}**, not **{number}**.\n"
-                        f"High Score: **{high_score}**\n\n"
+                        f"{message.author.mention} ruined it at **{result.current_number}**!\n\n"
+                        f"The next number was **{result.expected_number}**, not **{result.attempted_number}**.\n"
+                        f"High Score: **{result.high_score}**\n\n"
                         f"Start over from **1**!"
                     ),
                     color=discord.Color.red()
                 )
                 await message.channel.send(embed=embed)
-                
-                # Reset counting
-                await self.bot.db.reset_counting(message.guild.id)
-                
+
         except Exception as e:
             logger.error(f"Error in counting on_message: {e}", exc_info=True)
 

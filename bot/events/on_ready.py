@@ -20,7 +20,8 @@ async def on_ready():
     # Debug: welche app-commands sind aktuell im tree
     logger.debug("Commands in bot.tree:")
     for cmd in bot.tree.get_commands():
-        logger.debug(f"- {cmd.name}  ({type(cmd)})  desc={cmd.description}")
+        desc = getattr(cmd, 'description', 'No description (Context Menu)')
+        logger.debug(f"- {cmd.name}  ({type(cmd)})  desc={desc}")
 
     async def background_sync_commands(bot_ref):
         logger.info("on_ready: Syncing commands in background...")
@@ -65,6 +66,15 @@ async def on_ready():
                     )
                 )
                 await asyncio.sleep(300)
+    
+                # Status 4: Website
+                await bot_ref.change_presence(
+                    activity=discord.Activity(
+                        type=discord.ActivityType.listening, 
+                        name="https://ataraxia-bot.com"
+                    )   
+                )
+                await asyncio.sleep(300)
             except Exception as e:
                 logger.error(f"Error in presence cycle: {e}")
                 await asyncio.sleep(60) # Wait a bit before retrying if something fails
@@ -104,5 +114,12 @@ async def on_ready():
         logger.info(f"on_ready: Backfilled {len(bot.users)} global users tightly.")
     except Exception as e:
         logger.error(f"on_ready: Failed to backfill users: {e}")
+
+    logger.info("on_ready: Backfilling discord_servers database...")
+    try:
+        await db.bulk_upsert_servers(bot.guilds)
+        logger.info(f"on_ready: Backfilled {len(bot.guilds)} global servers.")
+    except Exception as e:
+        logger.error(f"on_ready: Failed to backfill servers: {e}")
 
     logger.info("on_ready: Startup completed - bot is now fully ready!")

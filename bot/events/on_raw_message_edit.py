@@ -26,9 +26,9 @@ async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
     # Try to get message from DB
     message_row = None
     try:
-        message_row = await db.get_message(payload.message_id)
+        message_row = await bot.message_cache.get_message(payload.message_id)
     except Exception as e:
-        logger.error(f"db.get_message failed: {e}")
+        logger.error(f"message_cache.get_message failed: {e}")
         return
     
     # Skip if message not found (e.g., bot messages, messages before bot joined)
@@ -47,7 +47,7 @@ async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
     
 
     # Save message to database
-    await db.save_message(
+    await bot.message_cache.update_message(
         message_id=payload.message_id,
         guild_id=payload.guild_id,
         channel_id=payload.channel_id,

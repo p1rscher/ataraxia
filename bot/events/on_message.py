@@ -31,17 +31,16 @@ async def on_message(message: discord.Message):
     await db.upsert_user(message.author)
 
     # Check XP cooldown before granting XP
-    if await db.can_gain_message_xp(message.author.id, message.guild.id):
+    if await bot.leveling_cache.can_gain_message_xp(message.author.id, message.guild.id):
         # Get customizable XP range for this guild
-        xp_min, xp_max = await db.get_message_xp_range(message.guild.id)
+        xp_min, xp_max = await bot.leveling_cache.get_message_xp_range(message.guild.id)
         base_xp = random.randint(xp_min, xp_max)
         
         # Calculate total multiplier (user, channel, role, booster)
-        total_multiplier = await db.calculate_total_multiplier(message.author, message.channel.id)
+        total_multiplier = await bot.leveling_cache.calculate_total_multiplier(message.author, message.channel.id)
         xp = int(base_xp * total_multiplier)
         
-        await db.add_xp(message.author.id, message.guild.id, xp)
-        await db.update_message_xp_cooldown(message.author.id, message.guild.id)
+        await bot.leveling_cache.grant_message_xp(message.author.id, message.guild.id, xp)
         
         # Check for level up (can level up multiple times)
         await check_level_up(message.author.id, message.guild.id, bot, message.channel)
@@ -56,7 +55,7 @@ async def on_message(message: discord.Message):
             logger.error(f"Failed to grant message coins: {e}")
 
    # Save message to database
-    await db.save_message(
+    await bot.message_cache.queue_message(
         message_id=message.id,
         guild_id=message.guild.id if message.guild else 0,
         channel_id=message.channel.id,

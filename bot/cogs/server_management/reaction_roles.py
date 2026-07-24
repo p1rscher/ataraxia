@@ -190,7 +190,7 @@ async def download_image_for_discord(url: str) -> tuple[Optional[discord.File], 
     return discord.File(io.BytesIO(data), filename=filename), None
 
 
-def format_emoji_for_option(emoji_value: str):
+def format_emoji_for_option(emoji_value: str) -> Optional[str | discord.PartialEmoji]:
     """Safe formatting for public buttons (only). In menus, we use labels."""
     if not emoji_value:
         return None
@@ -223,6 +223,33 @@ def format_emoji_for_option(emoji_value: str):
         pass
 
     return sanitize_unicode_emoji(emoji_value)
+
+
+def emoji_requires_label_fallback(component_emoji: Optional[str | discord.PartialEmoji]) -> bool:
+    """Return True for component emoji values Discord rejects, such as regional-indicator flag sequences."""
+    if not isinstance(component_emoji, str):
+        return False
+
+    return any(0x1F1E6 <= ord(char) <= 0x1F1FF for char in component_emoji)
+
+
+def build_component_label_and_emoji(label: str, emoji_value: str) -> tuple[str, Optional[str | discord.PartialEmoji]]:
+    """Return a `(label, emoji)` tuple, dropping invalid string emojis or moving unsupported emojis into the label."""
+    formatted_emoji = format_emoji_for_option(emoji_value)
+    safe_label = label or ""
+
+    # If it failed to format and is still just a string like :flag_us:, we drop it.
+    if isinstance(formatted_emoji, str) and formatted_emoji.startswith(':') and formatted_emoji.endswith(':'):
+        return safe_label, None
+
+    if emoji_requires_label_fallback(formatted_emoji):
+        emoji_text = normalize_emoji(emoji_value)
+        # Only prepend if it's a real unicode emoji, not a string shortcode
+        if emoji_text and not (emoji_text.startswith(':') and emoji_text.endswith(':')):
+            safe_label = f"{emoji_text} {safe_label}".strip()
+        return safe_label, None
+
+    return safe_label, formatted_emoji
 
 
 # ==========================================
@@ -287,10 +314,12 @@ class DynamicRoleButton(discord.ui.Button):
             count = len(role.members) if role else 0
             label = f"{label} | {count}" if label else str(count)
 
+        label, button_emoji = build_component_label_and_emoji(label, entry['emoji'])
+
         super().__init__(
             style=discord.ButtonStyle.primary,
             label=label if label else "\u200b",
-            emoji=format_emoji_for_option(entry['emoji']),
+            emoji=button_emoji,
             custom_id=f"rrbtn_{panel['message_id']}_{entry['role_id']}"
         )
 
@@ -321,21 +350,26 @@ class DynamicRoleSelect(discord.ui.Select):
         for e in entries:
             role = guild.get_role(e['role_id']) if guild else None
             role_name = role.name if role else f"Role {e['role_id']}"
-            label = e.get('label') or role_name
-            emo = format_emoji_for_option(e['emoji'])
+            
+            raw_label = e.get('label') or role_name
+            final_label, final_emoji = build_component_label_and_emoji(raw_label, e['emoji'])
+            
+            description = e.get('description')
+            if not description:
+                description = f"Assign the {role_name} role"
+                
             options.append(discord.SelectOption(
-                label=label[:100], 
+                label=final_label[:100], 
                 value=str(e['role_id']),
-                description=e.get('description')[:100] if e.get('description') else None,
-                emoji=emo
+                description=description[:100],
+                emoji=final_emoji
             ))
 
         if panel.get('role_removal', True):
             options.append(discord.SelectOption(
-                label="Remove my roles",
+                label=f"{REMOVE_PANEL_ROLES_EMOJI} Remove my roles",
                 value=REMOVE_PANEL_ROLES_VALUE,
-                description="Remove your currently assigned roles from this panel",
-                emoji=REMOVE_PANEL_ROLES_EMOJI
+                description="Remove your currently assigned roles from this panel"
             ))
 
         placeholder = "Select a role..."
@@ -439,6 +473,99 @@ class DynamicRoleView(discord.ui.View):
             pass
 
 
+class RoleHubPaginatorView(discord.ui.View):
+    def __init__(self, panels: list, entries_map: dict, guild: discord.Guild, current_idx: int = 0):
+        super().__init__(timeout=900)
+        self.panels = panels
+        self.entries_map = entries_map
+        self.guild = guild
+        self.current_idx = current_idx
+        
+        panel = self.panels[self.current_idx]
+        entries = self.entries_map[panel['message_id']]
+        
+        # Add role components
+        comp_type = panel.get("component_type", "Buttons")
+        if comp_type == "Select" and len(entries) > 0:
+            self.add_item(DynamicRoleSelect(panel, entries, guild))
+        else:
+            for entry in entries:
+                self.add_item(DynamicRoleButton(panel, entry, guild))
+                
+        # Add Pagination buttons if more than 1 panel
+        if len(self.panels) > 1:
+            btn_prev = discord.ui.Button(label="◀ Previous", style=discord.ButtonStyle.secondary, row=4, disabled=(self.current_idx == 0))
+            btn_prev.callback = self.go_prev
+            
+            btn_page = discord.ui.Button(label=f"Page {self.current_idx + 1}/{len(self.panels)}", style=discord.ButtonStyle.secondary, row=4, disabled=True)
+            
+            btn_next = discord.ui.Button(label="Next ▶", style=discord.ButtonStyle.secondary, row=4, disabled=(self.current_idx == len(self.panels) - 1))
+            btn_next.callback = self.go_next
+            
+            self.add_item(btn_prev)
+            self.add_item(btn_page)
+            self.add_item(btn_next)
+
+    async def _update_view(self, interaction: discord.Interaction):
+        new_view = RoleHubPaginatorView(self.panels, self.entries_map, self.guild, self.current_idx)
+        new_view.cog = getattr(self, 'cog', None)
+        panel = self.panels[self.current_idx]
+        entries = self.entries_map[panel['message_id']]
+        
+        if hasattr(self, 'cog') and self.cog:
+            embed, attachments = await self.cog._build_panel_embed_and_attachments(panel, entries)
+            await interaction.response.edit_message(embed=embed, view=new_view, attachments=attachments)
+        else:
+            await interaction.response.edit_message(view=new_view)
+
+    async def go_prev(self, interaction: discord.Interaction):
+        self.current_idx -= 1
+        await self._update_view(interaction)
+
+    async def go_next(self, interaction: discord.Interaction):
+        self.current_idx += 1
+        await self._update_view(interaction)
+        
+    async def refresh_counters(self, interaction: commands.Context):
+        # We can just call _update_view to reconstruct the same page
+        try:
+            new_view = RoleHubPaginatorView(self.panels, self.entries_map, self.guild, self.current_idx)
+            new_view.cog = getattr(self, 'cog', None)
+            await interaction.message.edit(view=new_view)
+        except Exception:
+            pass
+
+
+class RoleHubLauncher(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="🎭 Customize My Roles", style=discord.ButtonStyle.primary, custom_id="role_hub_start")
+    async def btn_start(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        
+        async with db._pool.acquire() as conn:
+            panels = await conn.fetch("SELECT * FROM reaction_role_messages WHERE guild_id = $1 ORDER BY message_id", interaction.guild_id)
+            
+        if not panels:
+            await _safe_send(interaction, "No role categories have been set up yet.", ephemeral=True)
+            return
+            
+        entries_map = {}
+        for p in panels:
+            entries = await db.get_reaction_role_entries(p['message_id'])
+            entries_map[p['message_id']] = entries
+            
+        view = RoleHubPaginatorView(panels, entries_map, interaction.guild, 0)
+        view.cog = self.cog
+        panel = panels[0]
+        entries = entries_map[panel['message_id']]
+        
+        embed, attachments = await self.cog._build_panel_embed_and_attachments(panel, entries)
+        await _safe_send(interaction, embed=embed, view=view, files=attachments, ephemeral=True)
+
+
 # ==========================================
 # SETUP DASHBOARDS (EDITORS)
 # ==========================================
@@ -488,32 +615,81 @@ class TextEditorModal(discord.ui.Modal, title="Edit Panel Output"):
         await self.editor_view.refresh(interaction)
 
 
+def get_color_emoji_for_role(role: discord.Role) -> str:
+    """Returns a matching colored circle emoji based on the role's color."""
+    if not role.color or role.color.value == 0:
+        return "⚪"  # Default uncolored
+
+    # Define color buckets (R, G, B) to circle emojis
+    colors = {
+        "🔴": (255, 0, 0),
+        "🟠": (255, 128, 0),
+        "🟡": (255, 255, 0),
+        "🟢": (0, 255, 0),
+        "🔵": (0, 0, 255),
+        "🟣": (128, 0, 128),
+        "🟤": (139, 69, 19),
+        "⚫": (0, 0, 0),
+        "⚪": (255, 255, 255)
+    }
+
+    r, g, b = role.color.r, role.color.g, role.color.b
+
+    def color_distance(c1, c2):
+        return (c1[0] - c2[0])**2 + (c1[1] - c2[1])**2 + (c1[2] - c2[2])**2
+
+    closest_emoji = min(colors.keys(), key=lambda k: color_distance((r, g, b), colors[k]))
+    return closest_emoji
+
+
 class SlotEditorModal(discord.ui.Modal, title="Edit/Add Role Slot"):
-    p_emoji = discord.ui.TextInput(label="Emoji", placeholder="😀 or <:custom:123456>", max_length=100)
+    p_emoji = discord.ui.TextInput(label="Emoji (Optional)", placeholder="Leave blank for auto-color, or type name", required=False, max_length=100)
     p_label = discord.ui.TextInput(label="Label", placeholder="Optional Label", required=False, max_length=80)
     p_desc = discord.ui.TextInput(label="Description", placeholder="Only for Select Menus", required=False, max_length=100)
 
-    def __init__(self, editor_view: "DashboardEditorView", target_role: discord.Role):
+    def __init__(self, editor_view: "DashboardEditorView", target_role: discord.Role, existing_entry: dict = None):
         super().__init__()
         self.editor_view = editor_view
         self.target_role = target_role
+        
+        if existing_entry:
+            self.p_emoji.default = existing_entry.get("emoji", "")
+            self.p_label.default = existing_entry.get("label", "")
+            self.p_desc.default = existing_entry.get("description", "")
 
     async def on_submit(self, interaction: commands.Context):
         raw_emoji = str(self.p_emoji).strip()
-        emoji_str = normalize_emoji(raw_emoji)
         
-        # Support raw discord emoji strings and global custom emoji search
-        if raw_emoji.startswith('<') and raw_emoji.endswith('>'):
-            emoji_str = raw_emoji
+        existing_entries = await db.get_reaction_role_entries(self.editor_view.message_id)
+        used_emojis = {e['emoji'] for e in existing_entries if e['role_id'] != self.target_role.id}
+        
+        if not raw_emoji:
+            emoji_str = get_color_emoji_for_role(self.target_role)
+            if emoji_str in used_emojis:
+                fallback_emojis = ["⚪", "⚫", "🟤", "🟣", "🔵", "🟢", "🟡", "🟠", "🔴", "🟦", "🟩", "🟨", "🟧", "🟥", "🟪", "🟫", "⬛", "⬜"]
+                for fb in fallback_emojis:
+                    if fb not in used_emojis:
+                        emoji_str = fb
+                        break
         else:
-            search_name = raw_emoji.strip(":")
-            # Search across all emojis the bot knows about
-            custom_emoji = discord.utils.get(interaction.client.emojis, name=search_name)
-            if custom_emoji:
-                emoji_str = str(custom_emoji)
-                
-        if not emoji_str:
-            await _safe_send(interaction, "Invalid emoji.", ephemeral=True)
+            emoji_str = normalize_emoji(raw_emoji)
+            
+            # Support raw discord emoji strings and global custom emoji search
+            if raw_emoji.startswith('<') and raw_emoji.endswith('>'):
+                emoji_str = raw_emoji
+            else:
+                search_name = raw_emoji.strip(":").lower()
+                # Partial match search across all emojis the bot knows about
+                custom_emoji = discord.utils.find(lambda e: search_name in e.name.lower(), interaction.client.emojis)
+                if custom_emoji:
+                    emoji_str = str(custom_emoji)
+                    
+            if not emoji_str:
+                await _safe_send(interaction, f"Could not find valid emoji for '{raw_emoji}'.", ephemeral=True)
+                return
+
+        if emoji_str in used_emojis:
+            await _safe_send(interaction, f"The emoji {emoji_str} is already used by another role in this panel. Please specify a different one.", ephemeral=True)
             return
 
         await db.add_reaction_role_entry(
@@ -645,11 +821,7 @@ class DashboardEditorView(discord.ui.View):
                     except Exception:
                         pass
 
-    # 1. Row 1
-    @discord.ui.button(label="Adjust Text/Image", style=discord.ButtonStyle.primary, row=0)
-    async def btn_adjust_text(self, interaction: commands.Context, btn: discord.ui.Button):
-        await interaction.response.send_modal(TextEditorModal(self))
-
+    # 1. Row 0
     @discord.ui.button(label="Add Slot", style=discord.ButtonStyle.primary, row=0)
     async def btn_add_slot(self, interaction: commands.Context, btn: discord.ui.Button):
         await _safe_send(interaction, "Select a role to add...", view=AddSlotRoleSelectView(self), ephemeral=True)
@@ -665,7 +837,6 @@ class DashboardEditorView(discord.ui.View):
                 super().__init__(timeout=900)
                 options = []
                 for e in editor.entries:
-                    # SAFE UI: No 'emoji=' field used in SelectOption to avoid API crashes
                     role_id = e['role_id']
                     e_emoji = e['emoji']
                     options.append(discord.SelectOption(
@@ -684,39 +855,84 @@ class DashboardEditorView(discord.ui.View):
                 
         await _safe_send(interaction, "Select the mapping to drop.", view=RemoveSelectView(self), ephemeral=True)
 
-    # 2. Row 2 (Toggles)
-    @discord.ui.button(label="Toggle Role Removal", style=discord.ButtonStyle.secondary, row=1)
-    async def btn_role_rem(self, interaction: commands.Context, btn: discord.ui.Button):
-        current = self.panel.get('role_removal', True)
-        await self.apply_update(role_removal=not current)
+    @discord.ui.button(label="Edit Slot", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_edit_slot(self, interaction: commands.Context, btn: discord.ui.Button):
+        if not self.entries:
+            await _safe_send(interaction, "No slots to edit.", ephemeral=True)
+            return
+            
+        class EditSelectView(discord.ui.View):
+            def __init__(self, editor: DashboardEditorView):
+                super().__init__(timeout=900)
+                options = []
+                for e in editor.entries:
+                    role_id = e['role_id']
+                    e_emoji = e['emoji']
+                    options.append(discord.SelectOption(
+                        label=f"{e_emoji} Slot: {role_id}", 
+                        value=str(role_id),
+                        description="Edit this mapping"
+                    ))
+                self.sel = discord.ui.Select(placeholder="Select slot to edit...", options=options)
+                self.sel.callback = self.callback
+                self.add_item(self.sel)
+                self.editor = editor
+                
+            async def callback(self, inter: commands.Context):
+                role_id = int(self.sel.values[0])
+                role = inter.guild.get_role(role_id) if inter.guild else None
+                if not role:
+                    await _safe_send(inter, "That role no longer exists.", ephemeral=True)
+                    return
+                    
+                entry = next((e for e in self.editor.entries if e['role_id'] == role_id), None)
+                if not entry:
+                    return
+                    
+                await inter.response.send_modal(SlotEditorModal(self.editor, role, existing_entry=entry))
+                
+        await _safe_send(interaction, "Select the mapping to edit.", view=EditSelectView(self), ephemeral=True)
+
+    @discord.ui.button(label="Adjust Text/Image", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_adjust_text(self, interaction: commands.Context, btn: discord.ui.Button):
+        await interaction.response.send_modal(TextEditorModal(self))
+
+    # 2. Row 1 (Settings Select Menu)
+    @discord.ui.select(
+        placeholder="⚙️ Panel Settings (Click to toggle)",
+        min_values=1,
+        max_values=1,
+        options=[
+            discord.SelectOption(label="Toggle Role Removal", value="toggle_removal", description="Switch whether users can remove roles"),
+            discord.SelectOption(label="Toggle Multi-Slot", value="toggle_multi", description="Switch between 1 role or many roles"),
+            discord.SelectOption(label="Toggle Component Type", value="toggle_comp", description="Switch between Buttons or Select Menus"),
+            discord.SelectOption(label="Toggle Role Counters", value="toggle_counters", description="Show/hide member count per role"),
+            discord.SelectOption(label="Toggle Slot Overview", value="toggle_overview", description="Show/hide the role list in description"),
+        ],
+        row=1
+    )
+    async def panel_settings_select(self, interaction: commands.Context, select: discord.ui.Select):
+        val = select.values[0]
+        if val == "toggle_removal":
+            current = self.panel.get('role_removal', True)
+            await self.apply_update(role_removal=not current)
+        elif val == "toggle_multi":
+            current = self.panel.get('multiple_slots', True)
+            await self.apply_update(multiple_slots=not current)
+        elif val == "toggle_comp":
+            current = self.panel.get('component_type', 'Buttons')
+            new_val = 'Select' if current == 'Buttons' else 'Buttons'
+            await self.apply_update(component_type=new_val)
+        elif val == "toggle_counters":
+            current = self.panel.get('show_counters', False)
+            await self.apply_update(show_counters=not current)
+        elif val == "toggle_overview":
+            current = self.panel.get('include_overview', False)
+            await self.apply_update(include_overview=not current)
+            
         await self.refresh(interaction)
 
-    @discord.ui.button(label="Toggle Multi-Slot", style=discord.ButtonStyle.secondary, row=1)
-    async def btn_multi(self, interaction: commands.Context, btn: discord.ui.Button):
-        current = self.panel.get('multiple_slots', True)
-        await self.apply_update(multiple_slots=not current)
-        await self.refresh(interaction)
-
-    @discord.ui.button(label="Switch Component Type", style=discord.ButtonStyle.secondary, row=1)
-    async def btn_comp(self, interaction: commands.Context, btn: discord.ui.Button):
-        current = self.panel.get('component_type', 'Buttons')
-        new_val = 'Select' if current == 'Buttons' else 'Buttons'
-        await self.apply_update(component_type=new_val)
-        await self.refresh(interaction)
-
-    @discord.ui.button(label="Toggle Role Counters", style=discord.ButtonStyle.secondary, row=1)
-    async def btn_counters(self, interaction: commands.Context, btn: discord.ui.Button):
-        current = self.panel.get('show_counters', False)
-        await self.apply_update(show_counters=not current)
-        await self.refresh(interaction)
-
-    # 3. Row 3 
-    @discord.ui.button(label="Toggle Slot Overview", style=discord.ButtonStyle.secondary, row=2)
-    async def btn_overview(self, interaction: commands.Context, btn: discord.ui.Button):
-        current = self.panel.get('include_overview', False)
-        await self.apply_update(include_overview=not current)
-        await self.refresh(interaction)
-
+    # 3. Row 2 
     @discord.ui.button(label="Require Role...", style=discord.ButtonStyle.secondary, row=2)
     async def btn_req_role(self, interaction: commands.Context, btn: discord.ui.Button):
         class ReqRoleSelectView(discord.ui.View):
@@ -733,12 +949,7 @@ class DashboardEditorView(discord.ui.View):
                 await self.editor.refresh(inter)
         await _safe_send(interaction, "Set requirement:", view=ReqRoleSelectView(self), ephemeral=True)
 
-    @discord.ui.button(label="Submit/Publish >>", style=discord.ButtonStyle.success, row=2)
-    async def btn_publish(self, interaction: commands.Context, btn: discord.ui.Button):
-        await self.cog.publish_panel(self.message_id, interaction)
-        self.stop()
-
-    @discord.ui.button(label="Delete/Discard Panel", style=discord.ButtonStyle.danger, row=3, custom_id="btn_delete_panel")
+    @discord.ui.button(label="Delete Panel", style=discord.ButtonStyle.danger, row=2, custom_id="btn_delete_panel")
     async def btn_delete(self, interaction: commands.Context, btn: discord.ui.Button):
         await db.delete_reaction_role_message(self.message_id)
         
@@ -761,13 +972,42 @@ class DashboardEditorView(discord.ui.View):
             pass
         self.stop()
 
+    @discord.ui.button(label="Submit/Publish >>", style=discord.ButtonStyle.success, row=2)
+    async def btn_publish(self, interaction: commands.Context, btn: discord.ui.Button):
+        await self.cog.publish_panel(self.message_id, interaction)
+        self.stop()
+
 
 class MainDashboardHome(discord.ui.View):
     def __init__(self, cog: "ReactionRolesCog"):
         super().__init__(timeout=300)
         self.cog = cog
 
-    @discord.ui.button(label="Create Role Message", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Deploy Role Hub (Modern)", style=discord.ButtonStyle.success)
+    async def btn_deploy_hub(self, interaction: commands.Context, btn: discord.ui.Button):
+        class HubChSelectView(discord.ui.View):
+            def __init__(self, cog):
+                super().__init__()
+                self.cog = cog
+            @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[discord.ChannelType.text])
+            async def cb(self, inter: commands.Context, sel: discord.ui.ChannelSelect):
+                raw_ch = sel.values[0]
+                ch = inter.guild.get_channel(raw_ch.id)
+                if not ch:
+                    await _safe_send(inter, "Could not resolve that channel.", ephemeral=True)
+                    return
+                
+                embed = discord.Embed(
+                    title="🎭 Role Hub",
+                    description="Click the button below to browse and customize your roles across all categories!",
+                    color=await get_guild_color(inter.guild_id)
+                )
+                await ch.send(embed=embed, view=RoleHubLauncher(self.cog))
+                await _safe_send(inter, f"✅ Role Hub deployed to {ch.mention}!", ephemeral=True)
+
+        await _safe_send(interaction, "Where should the Role Hub button be posted?", view=HubChSelectView(self.cog), ephemeral=True)
+
+    @discord.ui.button(label="Create Role Category", style=discord.ButtonStyle.primary)
     async def btn_create(self, interaction: commands.Context, btn: discord.ui.Button):
         # We need a channel target.
         class ChSelectView(discord.ui.View):
@@ -963,17 +1203,41 @@ class ReactionRolesCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         # Hot Restorer for reboot persistence
-        # We query all panels, reconstruct the view and attach it explicitly.
-        # This allows custom_ids dynamically attached to the view to map gracefully.
         logger.info("Initializing persistent reaction role dashboard buttons...")
-        # Since 'get_reaction_role_messages' requires guild_id, we just query ALL.
+        
+        # Register Role Hub Launcher globally
+        self.bot.add_view(RoleHubLauncher(self))
+        
         async with db._pool.acquire() as conn:
             panels = await conn.fetch("SELECT * FROM reaction_role_messages")
+            
+        # 1. Register all views immediately for responsiveness
         for p in panels:
             entries = await db.get_reaction_role_entries(p['message_id'])
             guild = self.bot.get_guild(p['guild_id'])
             if guild and entries:
                 self.bot.add_view(DynamicRoleView(p, entries, guild), message_id=p['message_id'])
+
+        # 2. Sync message UI state in the background
+        async def sync_messages():
+            logger.info("Starting background sync for reaction role messages...")
+            for p in panels:
+                entries = await db.get_reaction_role_entries(p['message_id'])
+                guild = self.bot.get_guild(p['guild_id'])
+                if guild and entries:
+                    try:
+                        channel = guild.get_channel(p['channel_id'])
+                        if channel:
+                            msg = await channel.fetch_message(p['message_id'])
+                            embed, attachments = await self._build_panel_embed_and_attachments(p, entries)
+                            view = DynamicRoleView(p, entries, guild)
+                            await msg.edit(embed=embed, view=view, attachments=attachments)
+                    except Exception as e:
+                        logger.warning(f"Could not sync reaction role message {p['message_id']}: {e}")
+                    await asyncio.sleep(2)  # Avoid rate limits
+            logger.info("Finished syncing reaction role messages.")
+            
+        self.bot.loop.create_task(sync_messages())
 
 
     @commands.Cog.listener()

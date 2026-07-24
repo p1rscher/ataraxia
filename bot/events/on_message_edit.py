@@ -51,9 +51,8 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
                 except Exception:
                     target_channel = None
 
-    # Fallback: Original channel
-    if not target_channel:
-        target_channel = before.channel
+    if target_channel is None:
+        return
 
     # Send embed
     try:
@@ -62,7 +61,7 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
         logger.error(f"Error sending edit embed: {e}")
     
        # Save message to database
-    await db.save_message(
+    await bot.message_cache.update_message(
         message_id=after.id,
         guild_id=after.guild.id if after.guild else 0,
         channel_id=after.channel.id,

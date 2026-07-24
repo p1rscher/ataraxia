@@ -44,7 +44,10 @@ async def init_db():
                 mod_log_channel_id BIGINT,
                 traffic_log_channel_id BIGINT,
                 ticket_log_channel_id BIGINT,
-                custom_prefix TEXT
+                custom_prefix TEXT,
+                default_language TEXT,
+                quote_channel_id BIGINT,
+                announcement_channel_id BIGINT
             )
         """)
 
@@ -72,6 +75,48 @@ async def init_db():
             ALTER TABLE guild_settings
             ADD COLUMN IF NOT EXISTS custom_prefix TEXT
         """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS default_language TEXT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS quote_channel_id BIGINT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE guild_settings
+            ADD COLUMN IF NOT EXISTS announcement_channel_id BIGINT
+        """)
+
+        # Guild Prefixes Table
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS guild_prefixes (
+                id SERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                prefix TEXT NOT NULL,
+                case_insensitive BOOLEAN DEFAULT FALSE,
+                UNIQUE(guild_id, prefix)
+            )
+        """)
+
+        # Migrate existing custom_prefix to guild_prefixes
+        await conn.execute("""
+            INSERT INTO guild_prefixes (guild_id, prefix, case_insensitive)
+            SELECT guild_id, custom_prefix, FALSE 
+            FROM guild_settings 
+            WHERE custom_prefix IS NOT NULL AND custom_prefix != ''
+            ON CONFLICT DO NOTHING
+        """)
+
+        # Remove the default if it was set previously
+        try:
+            await conn.execute("ALTER TABLE guild_settings ALTER COLUMN default_language DROP DEFAULT")
+        except:
+            pass
+
         
         
         # Messages
@@ -676,6 +721,28 @@ async def init_db():
             )
         """)
 
+        # Global Discord Servers Tracking
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS discord_servers (
+                guild_id BIGINT PRIMARY KEY,
+                server_name TEXT NOT NULL,
+                owner_id BIGINT,
+                owner_name TEXT,
+                owner_nickname TEXT,
+                server_status TEXT DEFAULT 'Private',
+                is_community BOOLEAN DEFAULT FALSE,
+                last_seen TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC')
+            )
+        """)
+        
+        try:
+            await conn.execute("ALTER TABLE discord_servers ADD COLUMN IF NOT EXISTS owner_name TEXT")
+            await conn.execute("ALTER TABLE discord_servers ADD COLUMN IF NOT EXISTS owner_nickname TEXT")
+            await conn.execute("ALTER TABLE discord_servers ADD COLUMN IF NOT EXISTS server_status TEXT DEFAULT 'Private'")
+            await conn.execute("ALTER TABLE discord_servers ADD COLUMN IF NOT EXISTS is_community BOOLEAN DEFAULT FALSE")
+        except Exception:
+            pass
+
     logger.info("Database initialized successfully!")
 
 async def close_db():
@@ -766,6 +833,29 @@ async def get_say_log_channel_id(guild_id: int) -> Optional[int]:
             guild_id
         )
         return row['say_log_channel_id'] if row else None
+
+async def set_quote_channel(guild_id: int, channel_id: int):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO guild_settings (guild_id, quote_channel_id) VALUES ($1, $2) "
+            "ON CONFLICT (guild_id) DO UPDATE SET quote_channel_id = $2",
+            guild_id, channel_id
+        )
+
+async def clear_quote_channel(guild_id: int):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE guild_settings SET quote_channel_id = NULL WHERE guild_id = $1",
+            guild_id
+        )
+
+async def get_quote_channel_id(guild_id: int) -> Optional[int]:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT quote_channel_id FROM guild_settings WHERE guild_id = $1",
+            guild_id
+        )
+        return row['quote_channel_id'] if row else None
 
 async def set_level_log_channel(guild_id: int, channel_id: int):
     """Set the level-up log channel for a guild"""
@@ -912,32 +1002,97 @@ async def get_ticket_log_channel_id(guild_id: int) -> Optional[int]:
         )
         return row['ticket_log_channel_id'] if row else None
 
-# ==================== CUSTOM PREFIX ====================
+# ==================== ANNOUNCEMENT CHANNEL ====================
 
-async def get_guild_prefix(guild_id: int) -> Optional[str]:
-    """Get the custom prefix for a guild. Returns None if not set (uses default)."""
-    async with _pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT custom_prefix FROM guild_settings WHERE guild_id = $1",
-            guild_id
-        )
-        return row['custom_prefix'] if row else None
-
-async def set_guild_prefix(guild_id: int, prefix: str):
-    """Set a custom prefix for a guild"""
+async def set_announcement_channel(guild_id: int, channel_id: int):
+    """Set the bot announcement channel for a guild"""
     async with _pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO guild_settings (guild_id, custom_prefix) VALUES ($1, $2) "
-            "ON CONFLICT (guild_id) DO UPDATE SET custom_prefix = $2",
+            "INSERT INTO guild_settings (guild_id, announcement_channel_id) VALUES ($1, $2) "
+            "ON CONFLICT (guild_id) DO UPDATE SET announcement_channel_id = $2",
+            guild_id, channel_id
+        )
+
+async def clear_announcement_channel(guild_id: int):
+    """Clear the bot announcement channel for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE guild_settings SET announcement_channel_id = NULL WHERE guild_id = $1",
+            guild_id
+        )
+
+async def get_announcement_channel_id(guild_id: int) -> Optional[int]:
+    """Get the bot announcement channel for a guild"""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT announcement_channel_id FROM guild_settings WHERE guild_id = $1",
+            guild_id
+        )
+        return row['announcement_channel_id'] if row else None
+
+async def get_all_announcement_channels() -> list[dict]:
+    """Get all guilds that have an announcement channel configured"""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT guild_id, announcement_channel_id FROM guild_settings "
+            "WHERE announcement_channel_id IS NOT NULL"
+        )
+        return [dict(row) for row in rows]
+
+# ==================== CUSTOM PREFIX ====================
+
+async def get_guild_prefixes(guild_id: int) -> list[dict]:
+    """Get the custom prefixes for a guild."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT prefix, case_insensitive FROM guild_prefixes WHERE guild_id = $1",
+            guild_id
+        )
+        return [{'prefix': r['prefix'], 'case_insensitive': r['case_insensitive']} for r in rows]
+
+async def add_guild_prefix(guild_id: int, prefix: str, case_insensitive: bool = False):
+    """Add a custom prefix for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO guild_prefixes (guild_id, prefix, case_insensitive) VALUES ($1, $2, $3) "
+            "ON CONFLICT (guild_id, prefix) DO UPDATE SET case_insensitive = $3",
+            guild_id, prefix, case_insensitive
+        )
+
+async def remove_guild_prefix(guild_id: int, prefix: str):
+    """Remove a custom prefix for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM guild_prefixes WHERE guild_id = $1 AND prefix = $2",
             guild_id, prefix
         )
 
-async def clear_guild_prefix(guild_id: int):
-    """Clear the custom prefix for a guild (revert to default)"""
+async def clear_guild_prefixes(guild_id: int):
+    """Clear all custom prefixes for a guild (revert to default)"""
     async with _pool.acquire() as conn:
         await conn.execute(
-            "UPDATE guild_settings SET custom_prefix = NULL WHERE guild_id = $1",
+            "DELETE FROM guild_prefixes WHERE guild_id = $1",
             guild_id
+        )
+
+# ==================== DEFAULT LANGUAGE ====================
+
+async def get_default_language(guild_id: int) -> Optional[str]:
+    """Get the default language for a guild. Returns None if not set."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT default_language FROM guild_settings WHERE guild_id = $1",
+            guild_id
+        )
+        return row['default_language'] if row else None
+
+async def set_default_language(guild_id: int, language: str):
+    """Set the default language for a guild"""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO guild_settings (guild_id, default_language) VALUES ($1, $2) "
+            "ON CONFLICT (guild_id) DO UPDATE SET default_language = $2",
+            guild_id, language
         )
 
 # ==================== MESSAGES ====================
@@ -1344,6 +1499,13 @@ async def remove_temp_voice_setup(guild_id: int):
         await conn.execute(
             "DELETE FROM temp_voice_settings WHERE guild_id = $1",
             guild_id
+        )
+
+async def remove_temp_voice_creator(channel_id: int):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM temp_voice_settings WHERE join_channel_id = $1",
+            channel_id
         )
 
 async def add_temp_voice_channel(channel_id: int, guild_id: int, owner_id: int):
@@ -1763,6 +1925,15 @@ async def update_message_xp_cooldown(user_id: int, guild_id: int):
             user_id, guild_id
         )
 
+async def get_message_xp_cooldown(user_id: int, guild_id: int):
+    """Get the last message XP time for a user."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT last_message_xp FROM xp_cooldowns WHERE user_id = $1 AND guild_id = $2",
+            user_id, guild_id
+        )
+        return row['last_message_xp'] if row else None
+
 async def add_xp(user_id: int, guild_id: int, amount: int):
     """Add XP to a user"""
     async with _pool.acquire() as conn:
@@ -2134,6 +2305,22 @@ async def get_user_premium_tier(user_id: int) -> str:
         )
         return row['tier'] if row else 'free'
 
+async def get_user_premium_details(user_id: int):
+    """Returns premium details (tier, activated_at, expires_at) if active, else None"""
+    async with _pool.acquire() as conn:
+        return await conn.fetchrow(
+            """SELECT tier, activated_at, expires_at FROM premium_users 
+               WHERE user_id = $1 AND expires_at > NOW()""",
+            user_id
+        )
+
+async def get_all_active_premium_users():
+    """Returns all users with an active (non-expired) premium subscription."""
+    async with _pool.acquire() as conn:
+        return await conn.fetch(
+            """SELECT user_id, tier FROM premium_users WHERE expires_at > NOW()"""
+        )
+
 async def set_user_premium(user_id: int, tier: str, days: int = 30):
     """Set premium tier for X days"""
     expires = datetime.now(timezone.utc) + timedelta(days=days)
@@ -2197,6 +2384,72 @@ async def get_counting_settings(guild_id: int):
             guild_id
         )
 
+async def get_all_counting_settings():
+    """Get counting channel settings for all guilds."""
+    async with _pool.acquire() as conn:
+        return await conn.fetch("SELECT * FROM counting_channels")
+
+async def bulk_upsert_user_levels(entries: list[tuple[int, int, int, int, float, int]]):
+    """Persist many user level states at once."""
+    if not entries:
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.executemany(
+            """
+            INSERT INTO user_levels (user_id, guild_id, xp, level, multiplier)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id, guild_id)
+            DO UPDATE SET
+                xp = EXCLUDED.xp,
+                level = EXCLUDED.level,
+                multiplier = EXCLUDED.multiplier
+            """,
+            [(user_id, guild_id, xp, level, multiplier) for user_id, guild_id, xp, level, multiplier, _ in entries],
+        )
+
+async def bulk_upsert_message_xp_cooldowns(entries: list[tuple[int, int, datetime, int]]):
+    """Persist many message XP cooldown timestamps at once."""
+    if not entries:
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.executemany(
+            """
+            INSERT INTO xp_cooldowns (user_id, guild_id, last_message_xp)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, guild_id)
+            DO UPDATE SET last_message_xp = EXCLUDED.last_message_xp
+            """,
+            [(user_id, guild_id, last_message_xp) for user_id, guild_id, last_message_xp, _ in entries],
+        )
+
+async def upsert_counting_state(
+    guild_id: int,
+    channel_id: int,
+    current_number: int,
+    high_score: int,
+    last_user_id: int | None,
+):
+    """Persist the full counting state for a guild."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO counting_channels (guild_id, channel_id, current_number, high_score, last_user_id)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (guild_id) DO UPDATE SET
+                channel_id = EXCLUDED.channel_id,
+                current_number = EXCLUDED.current_number,
+                high_score = EXCLUDED.high_score,
+                last_user_id = EXCLUDED.last_user_id
+            """,
+            guild_id,
+            channel_id,
+            current_number,
+            high_score,
+            last_user_id,
+        )
+
 async def update_counting(guild_id: int, new_number: int, last_user_id: int):
     """Update the current counting number and last user"""
     async with _pool.acquire() as conn:
@@ -2236,6 +2489,22 @@ async def increment_user_counting(guild_id: int, user_id: int):
                ON CONFLICT (guild_id, user_id)
                DO UPDATE SET correct_counts = counting_stats.correct_counts + 1""",
             guild_id, user_id
+        )
+
+async def bulk_increment_user_counting(entries: list[tuple[int, int, int]]):
+    """Increment correct counts for many users at once."""
+    if not entries:
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.executemany(
+            """
+            INSERT INTO counting_stats (guild_id, user_id, correct_counts)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (guild_id, user_id)
+            DO UPDATE SET correct_counts = counting_stats.correct_counts + EXCLUDED.correct_counts
+            """,
+            entries,
         )
 
 async def get_counting_leaderboard(guild_id: int, limit: int = 10):
@@ -2981,6 +3250,71 @@ async def bulk_upsert_users(users: list):
             ON CONFLICT (user_id) DO UPDATE SET 
                 username = EXCLUDED.username, 
                 global_name = EXCLUDED.global_name, 
+                last_seen = EXCLUDED.last_seen
+            """,
+            records
+        )
+
+# ==================== DISCORD SERVERS TRACKING ====================
+
+def _get_server_status(guild: discord.Guild) -> str:
+    if "VERIFIED" in guild.features: return "Verified"
+    if "PARTNERED" in guild.features: return "Partnered"
+    if "DISCOVERABLE" in guild.features: return "Discoverable"
+    if "COMMUNITY" in guild.features: return "Community"
+    return "Private"
+
+async def upsert_server(guild: discord.Guild):
+    """
+    Updates the global discord_servers table with the server's current info.
+    """
+    owner_name = guild.owner.name if guild.owner else None
+    owner_nickname = guild.owner.nick if guild.owner else None
+    server_status = _get_server_status(guild)
+    is_community = "COMMUNITY" in guild.features
+    
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO discord_servers (guild_id, server_name, owner_id, owner_name, owner_nickname, server_status, is_community, last_seen)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (guild_id) DO UPDATE SET 
+                server_name = EXCLUDED.server_name, 
+                owner_id = EXCLUDED.owner_id, 
+                owner_name = EXCLUDED.owner_name,
+                owner_nickname = EXCLUDED.owner_nickname,
+                server_status = EXCLUDED.server_status,
+                is_community = EXCLUDED.is_community,
+                last_seen = EXCLUDED.last_seen
+            """,
+            guild.id, guild.name, guild.owner_id, owner_name, owner_nickname, server_status, is_community, get_iso_now()
+        )
+
+async def bulk_upsert_servers(guilds: list):
+    """Bulk inserts a list of servers (e.g. at startup)."""
+    if not guilds:
+        return
+        
+    records = []
+    for g in guilds:
+        owner_name = g.owner.name if g.owner else None
+        owner_nickname = g.owner.nick if g.owner else None
+        server_status = _get_server_status(g)
+        is_community = "COMMUNITY" in g.features
+        records.append((g.id, g.name, g.owner_id, owner_name, owner_nickname, server_status, is_community, get_iso_now()))
+    
+    async with _pool.acquire() as conn:
+        await conn.executemany(
+            """
+            INSERT INTO discord_servers (guild_id, server_name, owner_id, owner_name, owner_nickname, server_status, is_community, last_seen)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (guild_id) DO UPDATE SET 
+                server_name = EXCLUDED.server_name, 
+                owner_id = EXCLUDED.owner_id, 
+                owner_name = EXCLUDED.owner_name,
+                owner_nickname = EXCLUDED.owner_nickname,
+                server_status = EXCLUDED.server_status,
+                is_community = EXCLUDED.is_community,
                 last_seen = EXCLUDED.last_seen
             """,
             records

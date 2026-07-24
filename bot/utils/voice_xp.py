@@ -44,7 +44,7 @@ async def grant_voice_xp(bot):
                     continue
                 
                 # Get guild-specific voice XP requirements
-                requirements = await db.get_voice_xp_requirements(guild_id)
+                requirements = await bot.leveling_cache.get_voice_requirements(guild_id)
                 
                 # Check AFK requirement
                 if requirements['require_non_afk'] and voice_state.afk:
@@ -66,7 +66,7 @@ async def grant_voice_xp(bot):
                         continue
 
                 # Check if enough time has passed based on guild settings
-                voice_interval = await db.get_voice_xp_interval(guild_id)
+                voice_interval = await bot.leveling_cache.get_voice_xp_interval(guild_id)
                 last_grant = session['last_xp_grant']
                 if last_grant.tzinfo is None:
                     last_grant = last_grant.replace(tzinfo=timezone.utc)
@@ -76,14 +76,14 @@ async def grant_voice_xp(bot):
                     continue
 
                 # Grant XP with customizable range and multipliers
-                xp_min, xp_max = await db.get_voice_xp_range(guild_id)
+                xp_min, xp_max = await bot.leveling_cache.get_voice_xp_range(guild_id)
                 base_xp = random.randint(xp_min, xp_max)
                 
                 # Calculate total multiplier (user, channel, role, booster)
-                total_multiplier = await db.calculate_total_multiplier(member, channel_id)
+                total_multiplier = await bot.leveling_cache.calculate_total_multiplier(member, channel_id)
                 xp = int(base_xp * total_multiplier)
                 
-                await db.add_xp(user_id, guild_id, xp)
+                await bot.leveling_cache.add_xp(user_id, guild_id, xp)
                 await db.update_voice_xp_grant(user_id, guild_id)
                 
                 logger.debug(f"Granted {xp} voice XP to user {user_id} in guild {guild_id}")

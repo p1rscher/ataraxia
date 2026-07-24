@@ -33,6 +33,7 @@ Supported Categories (for future organization):
 ├─────────────────────────────────────────────────────────────┤
 │ ADMIN & STATS                                               │
 │ - admin_stats.py     : Command usage statistics             │
+│ - announce.py        : Bot-wide announcements (owner only)  │
 │ - insights.py        : Server insights                      │
 │ - shutdown.py        : Bot shutdown command                 │
 ├─────────────────────────────────────────────────────────────┤

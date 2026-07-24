@@ -125,7 +125,7 @@ class CleanupChannelCog(commands.Cog):
                     deleted += len(recent_batch)
 
                     for msg in recent_batch:
-                        await db.mark_message_deleted(msg.id)
+                        await self.bot.message_cache.mark_deleted(msg.id)
 
                     # Status update every 500 deleted messages
                     if deleted % 500 == 0 or deleted == total:
@@ -138,7 +138,7 @@ class CleanupChannelCog(commands.Cog):
             for old_msg in old_batch:
                 try:
                     await old_msg.delete()
-                    await db.mark_message_deleted(old_msg.id)
+                    await self.bot.message_cache.mark_deleted(old_msg.id)
                     deleted += 1
                     
                     # Status update every 50 deleted messages

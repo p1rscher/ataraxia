@@ -10,6 +10,12 @@ from utils.embeds import get_guild_color
 
 logger = logging.getLogger(__name__)
 
+
+async def send_interaction_message(interaction: discord.Interaction, *args, **kwargs):
+    if interaction.response.is_done():
+        return await interaction.followup.send(*args, **kwargs)
+    return await interaction.response.send_message(*args, **kwargs)
+
 async def create_transcript_bytes(channel: discord.TextChannel) -> io.BytesIO:
     transcript = f"Transcript for {channel.name}\n"
     transcript += "=" * 50 + "\n\n"
@@ -34,26 +40,27 @@ class TicketActiveView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.danger, custom_id="ticket_close_btn")
-    async def close_ticket(self, interaction: commands.Context, button: discord.ui.Button):
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         # 1. Permission check
         settings = await db.get_ticket_settings(interaction.guild.id)
-        is_staff = interaction.author.guild_permissions.administrator
+        member = interaction.user
+        is_staff = member.guild_permissions.administrator
         
         if settings:
             support_role_id = settings.get('support_role_id')
             closer_role_id = settings.get('closer_role_id')
             
             if not is_staff and support_role_id:
-                if any(r.id == support_role_id for r in interaction.author.roles):
+                if any(r.id == support_role_id for r in member.roles):
                     is_staff = True
             if not is_staff and closer_role_id:
-                if any(r.id == closer_role_id for r in interaction.author.roles):
+                if any(r.id == closer_role_id for r in member.roles):
                     is_staff = True
                     
         if not is_staff:
-            return await interaction.send("❌ Only support staff or administrators can close tickets.", ephemeral=True)
+            return await send_interaction_message(interaction, "❌ Only support staff or administrators can close tickets.", ephemeral=True)
 
-        await interaction.send("Closing ticket and generating transcript... please wait.", ephemeral=True)
+        await send_interaction_message(interaction, "Closing ticket and generating transcript... please wait.", ephemeral=True)
         
         # 2. Check if it is a valid ticket
         ticket_data = await db.close_ticket_by_channel(interaction.channel_id)
@@ -78,7 +85,7 @@ class TicketActiveView(discord.ui.View):
                 if log_channel:
                     embed = discord.Embed(
                         title="🎫 Ticket Closed",
-                        description=f"Ticket created by <@{user_id}> was closed by {interaction.author.mention}.",
+                        description=f"Ticket created by <@{user_id}> was closed by {member.mention}.",
                         color=discord.Color.red()
                     )
                     embed.add_field(name="Channel Name", value=interaction.channel.name)
@@ -108,12 +115,12 @@ class TicketActiveView(discord.ui.View):
         finally:
             # 3. Always try to delete the channel no matter what happened during transcripting/DMs
             try:
-                await interaction.channel.delete(reason=f"Ticket closed by {interaction.author.name}")
+                await interaction.channel.delete(reason=f"Ticket closed by {member.name}")
             except discord.Forbidden:
-                await interaction.send("❌ I lack permissions to delete this channel. Please delete it manually.", ephemeral=True)
+                await send_interaction_message(interaction, "❌ I lack permissions to delete this channel. Please delete it manually.", ephemeral=True)
             except Exception as e:
                 logger.error(f"Failed to delete ticket channel: {e}")
-                await interaction.send(f"❌ Failed to delete channel: {e}", ephemeral=True)
+                await send_interaction_message(interaction, f"❌ Failed to delete channel: {e}", ephemeral=True)
 
 
 class TicketPanelView(discord.ui.View):
@@ -121,28 +128,29 @@ class TicketPanelView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="🎫 Create Ticket", style=discord.ButtonStyle.primary, custom_id="ticket_create_btn")
-    async def create_ticket(self, interaction: commands.Context, button: discord.ui.Button):
+    async def create_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         settings = await db.get_ticket_settings(interaction.guild.id)
         if not settings or not settings.get('category_id'):
-            return await interaction.send("❌ Ticket system is not fully set up. Contact an administrator.", ephemeral=True)
+            return await send_interaction_message(interaction, "❌ Ticket system is not fully set up. Contact an administrator.", ephemeral=True)
             
         # Check limits
-        open_tickets = await db.get_open_tickets(interaction.guild.id, interaction.author.id)
+        member = interaction.user
+        open_tickets = await db.get_open_tickets(interaction.guild.id, member.id)
         max_tickets = settings.get('max_tickets_per_user', 1)
         
         if len(open_tickets) >= max_tickets:
-            return await interaction.send(f"❌ You already have {len(open_tickets)} open ticket(s). Please close them before opening a new one.", ephemeral=True)
+            return await send_interaction_message(interaction, f"❌ You already have {len(open_tickets)} open ticket(s). Please close them before opening a new one.", ephemeral=True)
 
         category = interaction.guild.get_channel(settings['category_id'])
         if not category:
-            return await interaction.send("❌ The configured ticket category was not found.", ephemeral=True)
+            return await send_interaction_message(interaction, "❌ The configured ticket category was not found.", ephemeral=True)
 
-        await interaction.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
         
         # Permissions setup
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            interaction.author: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
+            member: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
             interaction.guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
         }
         
@@ -152,7 +160,7 @@ class TicketPanelView(discord.ui.View):
             
         # We need an ID first to append to the channel name
         # Alternatively we can create channel, then record in DB, then append the ID to channel name
-        clean_name = ''.join(c if c.isalnum() else '-' for c in interaction.author.name).lower()
+        clean_name = ''.join(c if c.isalnum() else '-' for c in member.name).lower()
         channel_name = f"ticket-{clean_name}"
         
         try:
@@ -160,13 +168,13 @@ class TicketPanelView(discord.ui.View):
                 name=channel_name,
                 category=category,
                 overwrites=overwrites,
-                topic=f"Ticket for {interaction.author.id}"
+                topic=f"Ticket for {member.id}"
             )
         except Exception as e:
-            return await interaction.send(f"❌ Failed to create ticket channel: {e}", ephemeral=True)
+            return await send_interaction_message(interaction, f"❌ Failed to create ticket channel: {e}", ephemeral=True)
             
         # DB Record
-        ticket_id = await db.create_ticket(interaction.guild.id, ticket_channel.id, interaction.author.id)
+        ticket_id = await db.create_ticket(interaction.guild.id, ticket_channel.id, member.id)
         
         # Rename channel to include ID based on user preference -> "ticket-username (#ticket-id)" format
         safe_name = f"ticket-{clean_name}-{ticket_id}"
@@ -174,17 +182,17 @@ class TicketPanelView(discord.ui.View):
 
         embed = discord.Embed(
             title=f"Ticket #{ticket_id}",
-            description=f"Welcome {interaction.author.mention}!\n\nPlease describe your issue and our support team will be with you shortly.",
+            description=f"Welcome {member.mention}!\n\nPlease describe your issue and our support team will be with you shortly.",
             color=await get_guild_color(interaction.guild.id, 'color_ticket')
         )
         
-        ping_content = f"{interaction.author.mention}"
+        ping_content = f"{member.mention}"
         if support_role:
             ping_content += f" {support_role.mention}"
             
         await ticket_channel.send(content=ping_content, embed=embed, view=TicketActiveView())
         
-        await interaction.send(f"✅ Ticket created: {ticket_channel.mention}", ephemeral=True)
+        await send_interaction_message(interaction, f"✅ Ticket created: {ticket_channel.mention}", ephemeral=True)
 
 
 class TicketCog(commands.Cog):

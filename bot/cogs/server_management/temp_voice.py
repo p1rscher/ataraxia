@@ -11,6 +11,12 @@ from utils.embeds import get_guild_color
 logger = logging.getLogger(__name__)
 
 
+async def send_interaction_message(interaction: discord.Interaction, *args, **kwargs):
+    if interaction.response.is_done():
+        return await interaction.followup.send(*args, **kwargs)
+    return await interaction.response.send_message(*args, **kwargs)
+
+
 class TempVoiceControlView(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -20,17 +26,18 @@ class TempVoiceControlView(View):
         style=discord.ButtonStyle.blurple,
         custom_id="tempvc_manage"
     )
-    async def manage_button(self, ctx: commands.Context, button: Button):
+    async def manage_button(self, interaction: discord.Interaction, button: Button):
         """Button to open the control panel"""
         # Get all temp channels of the user
         member_channels = []
-        for channel in ctx.guild.voice_channels:
+        for channel in interaction.guild.voice_channels:
             owner_id = await db.get_temp_voice_owner(channel.id)
-            if owner_id == ctx.author.id:
+            if owner_id == interaction.user.id:
                 member_channels.append(channel)
         
         if not member_channels:
-            await ctx.send(
+            await send_interaction_message(
+                interaction,
                 "You don't own a temporary voice channel.",
                 ephemeral=True
             )
@@ -43,10 +50,11 @@ class TempVoiceControlView(View):
             embed = discord.Embed(
                 title="🎤 Voice Channel Control",
                 description=f"Manage your channel: {member_channels[0].mention}",
-                color=await get_guild_color(ctx.guild.id)
+                color=await get_guild_color(interaction.guild.id)
             )
 
-            await ctx.send(
+            await send_interaction_message(
+                interaction,
                 embed=embed,
                 view=control_view,
                 ephemeral=True
@@ -54,7 +62,8 @@ class TempVoiceControlView(View):
         else:
             # If multiple channels: show select with options
             select_view = ChannelSelectView(member_channels)
-            await ctx.send(
+            await send_interaction_message(
+                interaction,
                 "Select the channel you want to manage:",
                 view=select_view,
                 ephemeral=True
@@ -83,7 +92,7 @@ class ChannelSelectView(View):
         self.channel_select.callback = self.select_callback
         self.add_item(self.channel_select)
     
-    async def select_callback(self, interaction: commands.Context):
+    async def select_callback(self, interaction: discord.Interaction):
         channel_id = int(self.channel_select.values[0])
         
         control_view = ChannelControlView(channel_id)
@@ -94,7 +103,8 @@ class ChannelSelectView(View):
             color=await get_guild_color(interaction.guild.id)
         )
         
-        await interaction.send(
+        await send_interaction_message(
+            interaction,
             embed=embed,
             view=control_view,
             ephemeral=True
@@ -105,11 +115,12 @@ class ChannelControlView(View):
         super().__init__(timeout=180)  # 3 Minuten Timeout
         self.channel_id = channel_id
     
-    async def interaction_check(self, ctx: commands.Context) -> bool:
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """Checks if the user is the owner"""
         owner_id = await db.get_temp_voice_owner(self.channel_id)
-        if owner_id != ctx.author.id:
-            await ctx.send(
+        if owner_id != interaction.user.id:
+            await send_interaction_message(
+                interaction,
                 "Only the channel owner can do this.",
                 ephemeral=True
             )
@@ -117,84 +128,84 @@ class ChannelControlView(View):
         return True
     
     @discord.ui.button(label="🔒 Lock", style=discord.ButtonStyle.red, row=0)
-    async def lock_button(self, ctx: commands.Context, button: Button):
-        channel = ctx.guild.get_channel(self.channel_id)
+    async def lock_button(self, interaction: discord.Interaction, button: Button):
+        channel = interaction.guild.get_channel(self.channel_id)
         if not channel:
-            await ctx.send("Channel not found.", ephemeral=True)
+            await send_interaction_message(interaction, "Channel not found.", ephemeral=True)
             return
 
-        await channel.set_permissions(ctx.guild.default_role, connect=False)
-        await ctx.send("🔒 Channel has been locked.", ephemeral=True)
+        await channel.set_permissions(interaction.guild.default_role, connect=False)
+        await send_interaction_message(interaction, "🔒 Channel has been locked.", ephemeral=True)
 
     @discord.ui.button(label="🔓 Unlock", style=discord.ButtonStyle.green, row=0)
-    async def unlock_button(self, ctx: commands.Context, button: Button):
-        channel = ctx.guild.get_channel(self.channel_id)
+    async def unlock_button(self, interaction: discord.Interaction, button: Button):
+        channel = interaction.guild.get_channel(self.channel_id)
         if not channel:
-            await ctx.send("Channel not found.", ephemeral=True)
+            await send_interaction_message(interaction, "Channel not found.", ephemeral=True)
             return
 
-        await channel.set_permissions(ctx.guild.default_role, connect=True)
-        await ctx.send("🔓 Channel has been unlocked.", ephemeral=True)
+        await channel.set_permissions(interaction.guild.default_role, connect=True)
+        await send_interaction_message(interaction, "🔓 Channel has been unlocked.", ephemeral=True)
 
     @discord.ui.button(label="👁️ Hide", style=discord.ButtonStyle.gray, row=0)
-    async def hide_button(self, ctx: commands.Context, button: Button):
-        channel = ctx.guild.get_channel(self.channel_id)
+    async def hide_button(self, interaction: discord.Interaction, button: Button):
+        channel = interaction.guild.get_channel(self.channel_id)
         if not channel:
-            await ctx.send("Channel not found.", ephemeral=True)
+            await send_interaction_message(interaction, "Channel not found.", ephemeral=True)
             return
 
-        await channel.set_permissions(ctx.guild.default_role, view_channel=False)
-        await ctx.send("👁️ Channel has been hidden.", ephemeral=True)
+        await channel.set_permissions(interaction.guild.default_role, view_channel=False)
+        await send_interaction_message(interaction, "👁️ Channel has been hidden.", ephemeral=True)
 
     @discord.ui.button(label="👁️‍🗨️ Show", style=discord.ButtonStyle.gray, row=0)
-    async def show_button(self, ctx: commands.Context, button: Button):
-        channel = ctx.guild.get_channel(self.channel_id)
+    async def show_button(self, interaction: discord.Interaction, button: Button):
+        channel = interaction.guild.get_channel(self.channel_id)
         if not channel:
-            await ctx.send("Channel not found.", ephemeral=True)
+            await send_interaction_message(interaction, "Channel not found.", ephemeral=True)
             return
 
-        await channel.set_permissions(ctx.guild.default_role, view_channel=True)
-        await ctx.send("👁️‍🗨️ Channel is now visible.", ephemeral=True)
+        await channel.set_permissions(interaction.guild.default_role, view_channel=True)
+        await send_interaction_message(interaction, "👁️‍🗨️ Channel is now visible.", ephemeral=True)
 
     @discord.ui.button(label="👤 Limit", style=discord.ButtonStyle.blurple, row=1)
-    async def limit_button(self, ctx: commands.Context, button: Button):
+    async def limit_button(self, interaction: discord.Interaction, button: Button):
         modal = UserLimitModal(self.channel_id)
-        await ctx.response.send_modal(modal)
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="✏️ Rename", style=discord.ButtonStyle.blurple, row=1)
-    async def rename_button(self, ctx: commands.Context, button: Button):
+    async def rename_button(self, interaction: discord.Interaction, button: Button):
         modal = RenameModal(self.channel_id)
-        await ctx.response.send_modal(modal)
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="➕ Invite", style=discord.ButtonStyle.blurple, row=1)
-    async def invite_button(self, ctx: commands.Context, button: Button):
+    async def invite_button(self, interaction: discord.Interaction, button: Button):
         modal = InviteUserModal(self.channel_id)
-        await ctx.response.send_modal(modal)
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="🚫 Kick", style=discord.ButtonStyle.blurple, row=1)
-    async def kick_button(self, ctx: commands.Context, button: Button):
+    async def kick_button(self, interaction: discord.Interaction, button: Button):
         modal = KickUserModal(self.channel_id)
-        await ctx.response.send_modal(modal)
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="👑 Transfer", style=discord.ButtonStyle.gray, row=2)
-    async def transfer_button(self, ctx: commands.Context, button: Button):
+    async def transfer_button(self, interaction: discord.Interaction, button: Button):
         modal = TransferOwnerModal(self.channel_id)
-        await ctx.response.send_modal(modal)
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="🗑️ Delete", style=discord.ButtonStyle.red, row=2)
-    async def delete_button(self, ctx: commands.Context, button: Button):
-        channel = ctx.guild.get_channel(self.channel_id)
+    async def delete_button(self, interaction: discord.Interaction, button: Button):
+        channel = interaction.guild.get_channel(self.channel_id)
         if not channel:
-            await ctx.send("Channel not found.", ephemeral=True)
+            await send_interaction_message(interaction, "Channel not found.", ephemeral=True)
             return
 
-        await ctx.send("Channel is being deleted...", ephemeral=True)
+        await send_interaction_message(interaction, "Channel is being deleted...", ephemeral=True)
 
         try:
             await db.remove_temp_voice_channel(channel.id)
-            await channel.delete(reason=f"Deleted by {ctx.author}")
+            await channel.delete(reason=f"Deleted by {interaction.user}")
         except Exception as e:
-            await ctx.send(f"Error: {e}", ephemeral=True)
+            await send_interaction_message(interaction, f"Error: {e}", ephemeral=True)
 
 
 # Modals
@@ -210,22 +221,24 @@ class UserLimitModal(discord.ui.Modal, title="Set User Limit"):
         super().__init__()
         self.channel_id = channel_id
     
-    async def on_submit(self, ctx: commands.Context):
+    async def on_submit(self, interaction: discord.Interaction):
         try:
             limit = int(self.limit.value)
             if limit < 0 or limit > 99:
                 raise ValueError
         except ValueError:
-            await ctx.send(
+            await send_interaction_message(
+                interaction,
                 "Please enter a number between 0 and 99.",
                 ephemeral=True
             )
             return
 
-        channel = ctx.guild.get_channel(self.channel_id)
+        channel = interaction.guild.get_channel(self.channel_id)
         if channel:
             await channel.edit(user_limit=limit)
-            await ctx.send(
+            await send_interaction_message(
+                interaction,
                 f"User limit set to {limit if limit > 0 else 'unlimited'}.",
                 ephemeral=True
             )
@@ -243,11 +256,12 @@ class RenameModal(discord.ui.Modal, title="Rename Channel"):
         super().__init__()
         self.channel_id = channel_id
     
-    async def on_submit(self, ctx: commands.Context):
-        channel = ctx.guild.get_channel(self.channel_id)
+    async def on_submit(self, interaction: discord.Interaction):
+        channel = interaction.guild.get_channel(self.channel_id)
         if channel:
             await channel.edit(name=self.name.value)
-            await ctx.send(
+            await send_interaction_message(
+                interaction,
                 f"Channel renamed to: **{self.name.value}**",
                 ephemeral=True
             )
@@ -264,10 +278,10 @@ class InviteUserModal(discord.ui.Modal, title="Invite User"):
         super().__init__()
         self.channel_id = channel_id
     
-    async def on_submit(self, ctx: commands.Context):
-        channel = ctx.guild.get_channel(self.channel_id)
+    async def on_submit(self, interaction: discord.Interaction):
+        channel = interaction.guild.get_channel(self.channel_id)
         if not channel:
-            await ctx.send("Channel not found.", ephemeral=True)
+            await send_interaction_message(interaction, "Channel not found.", ephemeral=True)
             return
         
         # Parse User
@@ -278,19 +292,20 @@ class InviteUserModal(discord.ui.Modal, title="Invite User"):
         # Try as ID
         try:
             user_id = int(user_input)
-            member = ctx.guild.get_member(user_id)
+            member = interaction.guild.get_member(user_id)
         except ValueError:
             # Try as Username
-            member = discord.utils.get(ctx.guild.members, name=user_input)
+            member = discord.utils.get(interaction.guild.members, name=user_input)
             if not member:
-                member = discord.utils.get(ctx.guild.members, display_name=user_input)
+                member = discord.utils.get(interaction.guild.members, display_name=user_input)
         
         if not member:
-            await ctx.send("User not found.", ephemeral=True)
+            await send_interaction_message(interaction, "User not found.", ephemeral=True)
             return
         
         await channel.set_permissions(member, connect=True)
-        await ctx.send(
+        await send_interaction_message(
+            interaction,
             f"✅ {member.mention} has been invited.",
             ephemeral=True
         )
@@ -307,10 +322,10 @@ class KickUserModal(discord.ui.Modal, title="Kick User"):
         super().__init__()
         self.channel_id = channel_id
     
-    async def on_submit(self, ctx: commands.Context):
-        channel = ctx.guild.get_channel(self.channel_id)
+    async def on_submit(self, interaction: discord.Interaction):
+        channel = interaction.guild.get_channel(self.channel_id)
         if not channel:
-            await ctx.send("Channel not found.", ephemeral=True)
+            await send_interaction_message(interaction, "Channel not found.", ephemeral=True)
             return
         
         user_input = self.user.value.strip().replace("<@", "").replace(">", "").replace("!", "")
@@ -319,14 +334,14 @@ class KickUserModal(discord.ui.Modal, title="Kick User"):
         
         try:
             user_id = int(user_input)
-            member = ctx.guild.get_member(user_id)
+            member = interaction.guild.get_member(user_id)
         except ValueError:
-            member = discord.utils.get(ctx.guild.members, name=user_input)
+            member = discord.utils.get(interaction.guild.members, name=user_input)
             if not member:
-                member = discord.utils.get(ctx.guild.members, display_name=user_input)
+                member = discord.utils.get(interaction.guild.members, display_name=user_input)
 
         if not member:
-            await ctx.send("User not found.", ephemeral=True)
+            await send_interaction_message(interaction, "User not found.", ephemeral=True)
             return
 
         # Disconnect if in channel
@@ -335,7 +350,8 @@ class KickUserModal(discord.ui.Modal, title="Kick User"):
 
         # Remove connect permission
         await channel.set_permissions(member, connect=False)
-        await ctx.send(
+        await send_interaction_message(
+            interaction,
             f"🚫 {member.mention} has been kicked.",
             ephemeral=True
         )
@@ -352,10 +368,10 @@ class TransferOwnerModal(discord.ui.Modal, title="Transfer Ownership"):
         super().__init__()
         self.channel_id = channel_id
     
-    async def on_submit(self, ctx: commands.Context):
-        channel = ctx.guild.get_channel(self.channel_id)
+    async def on_submit(self, interaction: discord.Interaction):
+        channel = interaction.guild.get_channel(self.channel_id)
         if not channel:
-            await ctx.send("Channel not found.", ephemeral=True)
+            await send_interaction_message(interaction, "Channel not found.", ephemeral=True)
             return
         
         user_input = self.user.value.strip().replace("<@", "").replace(">", "").replace("!", "")
@@ -364,14 +380,14 @@ class TransferOwnerModal(discord.ui.Modal, title="Transfer Ownership"):
         
         try:
             user_id = int(user_input)
-            member = ctx.guild.get_member(user_id)
+            member = interaction.guild.get_member(user_id)
         except ValueError:
-            member = discord.utils.get(ctx.guild.members, name=user_input)
+            member = discord.utils.get(interaction.guild.members, name=user_input)
             if not member:
-                member = discord.utils.get(ctx.guild.members, display_name=user_input)
+                member = discord.utils.get(interaction.guild.members, display_name=user_input)
 
         if not member:
-            await ctx.send("User not found.", ephemeral=True)
+            await send_interaction_message(interaction, "User not found.", ephemeral=True)
             return
         
         # Update Owner in DB
@@ -380,7 +396,8 @@ class TransferOwnerModal(discord.ui.Modal, title="Transfer Ownership"):
         # Optional: Rename channel
         await channel.edit(name=f"{member.display_name}'s Channel")
 
-        await ctx.send(
+        await send_interaction_message(
+            interaction,
             f"👑 Ownership transferred to {member.mention}.",
             ephemeral=True
         )
