@@ -577,8 +577,7 @@ class ChatPersonalityCog(commands.Cog):
     def _extract_emojis(self, text: str) -> list[str]:
         if not text:
             return []
-        items = CUSTOM_EMOJI_RE.findall(text)
-        items.extend([entry["emoji"] for entry in emoji.emoji_list(text)])
+        items = [entry["emoji"] for entry in emoji.emoji_list(text)]
         return items
 
     def _extract_gif_links(self, text: str) -> list[str]:
@@ -991,7 +990,7 @@ class ChatPersonalityCog(commands.Cog):
         try:
             completion = await asyncio.wait_for(
                 self._groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
