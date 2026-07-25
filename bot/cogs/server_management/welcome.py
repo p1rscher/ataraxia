@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+import json
 import logging
 from core import database_pg as db
 from cogs.utilities.embed_builder import EmbedFieldEditorView
@@ -51,6 +52,8 @@ class WelcomeChannelSelect(discord.ui.ChannelSelect):
             placeholder=(
                 "Select a channel for this traffic event..."
                 if view_obj.traffic_event
+                else "Select a channel for level-up notifications..."
+                if view_obj.level_up
                 else "Select a channel to post the welcome message..."
             ),
             channel_types=[discord.ChannelType.text],
@@ -72,7 +75,7 @@ class MainTextModal(discord.ui.Modal, title="Edit Welcome Text"):
         super().__init__(title=view_obj.modal_title("Edit Text"))
         self.view_obj = view_obj
         p = view_obj.settings
-        if view_obj.traffic_event:
+        if view_obj.traffic_event or view_obj.level_up:
             self.p_content.label = "Optional Message Text"
             self.p_content.placeholder = "Optional text outside the embed"
             self.p_title.label = "Embed Title"
@@ -138,12 +141,14 @@ class WelcomeDashboardView(discord.ui.View):
         interaction,
         traffic_event: str | None = None,
         trigger_word: str | None = None,
+        level_up: bool = False,
     ):
         super().__init__(timeout=600)
         self.cog = cog
         self.orig_interaction = interaction
         self.traffic_event = traffic_event
         self.trigger_word = trigger_word
+        self.level_up = level_up
         self.settings = None
         self.preview_message = None
 
@@ -162,6 +167,13 @@ class WelcomeDashboardView(discord.ui.View):
             self.btn_author_footer.label = "Edit Traffic Author & Footer"
             self.btn_fields.label = "Edit Traffic Fields"
             self.btn_clear.label = "Reset Traffic Embed"
+        elif level_up:
+            self.btn_channel.label = "Set Level-Up Channel"
+            self.btn_text.label = "Edit Level-Up Text"
+            self.btn_images.label = "Edit Level-Up Images"
+            self.btn_author_footer.label = "Edit Level-Up Author & Footer"
+            self.btn_fields.label = "Edit Level-Up Fields"
+            self.btn_clear.label = "Reset Level-Up Embed"
 
     def traffic_label(self) -> str:
         return {
@@ -175,6 +187,8 @@ class WelcomeDashboardView(discord.ui.View):
             return f"Trigger `{self.trigger_word}`"
         if self.traffic_event:
             return self.traffic_label()
+        if self.level_up:
+            return "Level-Up"
         return "Welcome"
 
     def modal_title(self, action: str) -> str:
@@ -191,6 +205,8 @@ class WelcomeDashboardView(discord.ui.View):
                 f"traffic_{self.traffic_event}",
                 "color_primary",
             )
+        if self.level_up:
+            return await get_embed_color(guild_id, "level_up_notification", "color_level_up")
         return await get_embed_color(guild_id, "welcome_message", "color_welcome")
 
     async def fetch_state(self):
@@ -219,6 +235,36 @@ class WelcomeDashboardView(discord.ui.View):
                     'embed_title': 'Triggered Embed',
                     'embed_description': 'Customize this triggered message.',
                     'embed_color': 0x5865F2,
+                })
+            return
+
+        if self.level_up:
+            config = await db.get_level_up_embed_config(guild_id) or {}
+            self.settings = {
+                'channel_id': await db.get_level_log_channel_id(guild_id),
+                'message': config.get('message'),
+                'embed_title': config.get('title'),
+                'embed_description': config.get('description'),
+                'embed_thumbnail': config.get('thumbnail'),
+                'embed_image': config.get('image'),
+                'embed_author_name': config.get('author_name'),
+                'embed_author_icon': config.get('author_icon'),
+                'embed_footer_text': config.get('footer_text'),
+                'embed_footer_icon': config.get('footer_icon'),
+                'embed_fields': normalize_embed_fields(config.get('fields')),
+                'embed_timestamp': bool(config.get('timestamp_enabled', False)),
+            }
+
+            if not config:
+                self.settings.update({
+                    'embed_title': '🎉 Level Up!',
+                    'embed_description': '{user} has reached **Level {level}**!',
+                    'embed_thumbnail': '{user.avatar}',
+                    'embed_fields': [
+                        {'name': 'Current XP', 'value': '{current_xp}', 'inline': True},
+                        {'name': 'Next Level', 'value': '{next_level_xp} XP', 'inline': True},
+                    ],
+                    'embed_timestamp': False,
                 })
             return
 
@@ -261,6 +307,8 @@ class WelcomeDashboardView(discord.ui.View):
         guild_id = self.orig_interaction.guild.id
         if self.traffic_event:
             await db.set_traffic_event_channel(guild_id, self.traffic_event, channel_id)
+        elif self.level_up:
+            await db.set_level_log_channel(guild_id, channel_id)
         else:
             await db.update_welcome_message(guild_id, channel_id=channel_id)
 
@@ -304,6 +352,29 @@ class WelcomeDashboardView(discord.ui.View):
             self.settings['_embed_data'] = embed_data
             return
 
+        if self.level_up:
+            mapping = {
+                'message': 'message',
+                'embed_title': 'title',
+                'embed_description': 'description',
+                'embed_thumbnail': 'thumbnail',
+                'embed_image': 'image',
+                'embed_author_name': 'author_name',
+                'embed_author_icon': 'author_icon',
+                'embed_footer_text': 'footer_text',
+                'embed_footer_icon': 'footer_icon',
+                'embed_fields': 'fields',
+                'embed_timestamp': 'timestamp_enabled',
+            }
+            level_values = {
+                mapping[key]: value
+                for key, value in values.items()
+                if key in mapping
+            }
+            if level_values:
+                await db.set_level_up_embed_config(guild_id, **level_values)
+            return
+
         if not self.traffic_event:
             await db.update_welcome_message(guild_id, **values)
             return
@@ -339,6 +410,17 @@ class WelcomeDashboardView(discord.ui.View):
         extra_values = {}
         if self.trigger_word:
             extra_values = {'trigger': self.trigger_word, 'event': 'trigger'}
+        elif self.level_up:
+            preview_level = 12
+            next_required = 7286
+            extra_values = {
+                'event': 'level_up',
+                'level': str(preview_level),
+                'levels_gained': '1',
+                'current_xp': f"{next_required - 15:,}",
+                'next_level_xp': f"{next_required:,}",
+                'role_unlocked': '@Level Role',
+            }
         elif self.traffic_event:
             extra_values = {
                 'account_created': f"<t:{int(member.created_at.timestamp())}:f>",
@@ -388,7 +470,14 @@ class WelcomeDashboardView(discord.ui.View):
                     if self.trigger_word and welcome.get('embed_color')
                     else await self.embed_color()
                 ),
-                timestamp=preview_time if preview_mode and has_time_placeholder(*embed_values) else None,
+                timestamp=(
+                    preview_time
+                    if preview_mode and (
+                        has_time_placeholder(*embed_values)
+                        or bool(welcome.get('embed_timestamp'))
+                    )
+                    else None
+                ),
             )
             
             if welcome.get('embed_author_name'):
@@ -430,6 +519,9 @@ class WelcomeDashboardView(discord.ui.View):
             }
             dashboard_title = f"📋 {event_labels.get(self.traffic_event, self.traffic_event.title())} Embed Dashboard"
             dashboard_description = "Use the buttons below to customize this traffic embed layout."
+        elif self.level_up:
+            dashboard_title = "🏆 Level-Up Embed Dashboard"
+            dashboard_description = "Use the buttons below to customize level-up notifications."
         else:
             dashboard_title = "👋 Welcome Message Dashboard"
             dashboard_description = "Use the buttons below to customize the welcome message layout."
@@ -457,6 +549,14 @@ class WelcomeDashboardView(discord.ui.View):
             "`{member_count_ext}` - Human members with ordinal suffix (31st, 22nd, 13th)\n"
             "`{time}` - Discord-localized time when the message is sent"
         )
+        if self.level_up:
+            vars_info += (
+                "\n`{level}` - New level number\n"
+                "`{levels_gained}` - Number of levels gained at once\n"
+                "`{current_xp}` - Current total XP\n"
+                "`{next_level_xp}` - XP required for the next level\n"
+                "`{role_unlocked}` - Mention of the unlocked role (if any)"
+            )
         emb.add_field(name="Available Variables", value=vars_info, inline=False)
         return emb
 
@@ -478,7 +578,12 @@ class WelcomeDashboardView(discord.ui.View):
     async def btn_channel(self, interaction: commands.Context, btn: discord.ui.Button):
         view = discord.ui.View()
         view.add_item(WelcomeChannelSelect(self))
-        await _safe_send(interaction, "Select the welcome channel:", view=view, ephemeral=True)
+        prompt = "Select the welcome channel:"
+        if self.traffic_event:
+            prompt = "Select the traffic channel:"
+        elif self.level_up:
+            prompt = "Select the level-up channel:"
+        await _safe_send(interaction, prompt, view=view, ephemeral=True)
 
     @discord.ui.button(label="Edit Main Text", style=discord.ButtonStyle.secondary, row=1)
     async def btn_text(self, interaction: commands.Context, btn: discord.ui.Button):
@@ -512,6 +617,8 @@ class WelcomeDashboardView(discord.ui.View):
             await db.delete_trigger_embed(interaction.guild.id, self.trigger_word)
         elif self.traffic_event:
             await db.reset_traffic_embed_config(interaction.guild.id, self.traffic_event)
+        elif self.level_up:
+            await db.reset_level_up_embed_config(interaction.guild.id)
         else:
             await db.remove_welcome_message(interaction.guild.id)
         await self.fetch_state()

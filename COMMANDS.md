@@ -46,6 +46,10 @@ Set the XP range for voice activity.
 View current XP settings for the server.
 - **No parameters**
 
+**`/xp embed`** 🟠
+Open the visual dashboard to customize the level-up embed (same editor style as welcome/traffic embeds).
+- **No parameters**
+
 ### `/multiplier` - XP Multiplier Commands
 
 **`/multiplier channel [channel] [multiplier]`** 🟠

@@ -446,12 +446,16 @@ class ChatPersonalityCog(commands.Cog):
                 incoming_text=message.content,
                 settings=settings,
             )
-            sticker = await self._pick_sticker_for_message(
-                message.guild,
-                message.channel.id,
-                message.content,
-                settings,
-            )
+            sticker = None
+            try:
+                sticker = await self._pick_sticker_for_message(
+                    message.guild,
+                    message.channel.id,
+                    message.content,
+                    settings,
+                )
+            except Exception:
+                logger.exception("Failed to resolve a sticker for chat personality response")
 
             if not settings.get("allow_profanity", False):
                 response_text = self._sanitize_profanity(response_text)
@@ -679,12 +683,13 @@ class ChatPersonalityCog(commands.Cog):
                 sticker_name = raw_name.strip() or sticker_name
 
         if sticker_id is not None:
-            sticker = guild.get_sticker(sticker_id)
+            get_sticker = getattr(guild, "get_sticker", None)
+            sticker = get_sticker(sticker_id) if callable(get_sticker) else None
             if isinstance(sticker, discord.GuildSticker):
                 return sticker
 
         lowered = sticker_name.casefold()
-        for sticker in guild.stickers:
+        for sticker in getattr(guild, "stickers", []) or []:
             if getattr(sticker, "name", "").casefold() == lowered:
                 return sticker
         return None

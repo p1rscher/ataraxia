@@ -4,6 +4,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ext import commands
 from core import database_pg as db
+from cogs.server_management.welcome import WelcomeDashboardView
 from utils.embeds import get_guild_color
 
 class XPSettingsCog(commands.Cog):
@@ -215,6 +216,21 @@ class XPSettingsCog(commands.Cog):
         
         embed.set_footer(text="Use /xp commands to change settings")
         await interaction.send(embed=embed, ephemeral=True)
+
+    @xp_group.command(name="embed", description="Open the visual editor for level-up notifications")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def xp_embed_dashboard(self, ctx: commands.Context):
+        editor = WelcomeDashboardView(self, ctx, level_up=True)
+        await editor.fetch_state()
+        await ctx.send(embed=await editor._build_editor_embed(), view=editor, ephemeral=True)
+
+        content, preview_embed = await editor._build_preview(ctx, preview_mode=True)
+        editor.preview_message = await ctx.send(
+            content=content or "**Live Preview:**",
+            embed=preview_embed,
+            ephemeral=True,
+        )
 
     @commands.hybrid_group(name="xpmultiplier", description="Manage XP multipliers")
     async def multiplier_group(self, ctx: commands.Context):
