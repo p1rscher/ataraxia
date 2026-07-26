@@ -194,6 +194,7 @@ async def send_member_traffic_embed(
         ]
 
     default_config = {
+        'content': None,
         'title': default_title,
         'description': None,
         'author_name': None,
@@ -274,7 +275,7 @@ async def send_member_traffic_embed(
             inline=bool(field.get('inline', False)),
         )
 
-    await channel.send(embed=embed)
+    await channel.send(content=render(default_config.get('content')), embed=embed)
     return True
 
 

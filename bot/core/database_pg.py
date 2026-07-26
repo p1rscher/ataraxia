@@ -686,6 +686,7 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS traffic_embed_configs (
                 guild_id BIGINT NOT NULL,
                 event_key TEXT NOT NULL,
+                content TEXT,
                 title TEXT,
                 description TEXT,
                 author_name TEXT,
@@ -699,6 +700,10 @@ async def init_db():
                 PRIMARY KEY (guild_id, event_key)
             )
         """)
+        await conn.execute(
+            "ALTER TABLE traffic_embed_configs "
+            "ADD COLUMN IF NOT EXISTS content TEXT"
+        )
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS level_up_embed_configs (
@@ -3236,7 +3241,7 @@ async def set_traffic_embed_config(guild_id: int, event: str, **values):
     if event not in TRAFFIC_EMBED_EVENTS:
         raise ValueError(f"Unsupported traffic embed event: {event}")
     allowed = {
-        'title', 'description', 'author_name', 'author_icon',
+        'content', 'title', 'description', 'author_name', 'author_icon',
         'footer_text', 'footer_icon', 'thumbnail', 'image',
         'fields', 'timestamp_enabled',
     }

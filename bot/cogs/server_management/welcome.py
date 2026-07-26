@@ -280,7 +280,7 @@ class WelcomeDashboardView(discord.ui.View):
 
         self.settings = {
             'channel_id': channel_id,
-            'message': None,
+            'message': config.get('content'),
             'embed_title': config.get('title'),
             'embed_description': config.get('description'),
             'embed_thumbnail': config.get('thumbnail'),
@@ -380,6 +380,7 @@ class WelcomeDashboardView(discord.ui.View):
             return
 
         mapping = {
+            'message': 'content',
             'embed_title': 'title',
             'embed_description': 'description',
             'embed_thumbnail': 'thumbnail',
