@@ -134,6 +134,57 @@ class AuthorFooterModal(discord.ui.Modal, title="Author & Footer"):
         )
         await self.view_obj.refresh(interaction)
 
+
+class TriggerColorModal(discord.ui.Modal, title="Trigger Embed Color"):
+    p_color = discord.ui.TextInput(
+        label="Embed Color (empty = reset)",
+        required=False,
+        max_length=16,
+        placeholder="#RRGGBB, 0xRRGGBB, 5793266, or leave empty",
+    )
+
+    def __init__(self, view_obj, current_color: int | None = None):
+        super().__init__(title=view_obj.modal_title("Set Color"))
+        self.view_obj = view_obj
+        current = current_color
+        if current is None and view_obj.trigger_word:
+            current = view_obj.settings.get('embed_color')
+        self.p_color.default = f"#{int(current):06X}" if isinstance(current, int) else ""
+
+    @staticmethod
+    def _parse_color(raw: str) -> int | None:
+        value = (raw or "").strip()
+        if not value:
+            return None
+
+        if value.startswith("#"):
+            value = value[1:]
+        elif value.lower().startswith("0x"):
+            value = value[2:]
+
+        if all(ch in "0123456789abcdefABCDEF" for ch in value) and len(value) in {3, 6}:
+            if len(value) == 3:
+                value = "".join(ch * 2 for ch in value)
+            return int(value, 16)
+
+        if value.isdigit():
+            parsed = int(value)
+            if 0 <= parsed <= 0xFFFFFF:
+                return parsed
+        return -1
+
+    async def on_submit(self, interaction: commands.Context):
+        parsed = self._parse_color(str(self.p_color))
+        if parsed == -1:
+            await interaction.response.send_message(
+                "❌ Invalid color. Use `#RRGGBB`, `0xRRGGBB`, short hex like `#ABC`, or a decimal between 0 and 16777215.",
+                ephemeral=True,
+            )
+            return
+
+        await self.view_obj.apply_color_value(parsed)
+        await self.view_obj.refresh(interaction)
+
 class WelcomeDashboardView(discord.ui.View):
     def __init__(
         self,
@@ -159,6 +210,8 @@ class WelcomeDashboardView(discord.ui.View):
             self.btn_images.label = "Edit Trigger Images"
             self.btn_author_footer.label = "Edit Trigger Author & Footer"
             self.btn_fields.label = "Edit Trigger Fields"
+            self.btn_color.label = "Set Trigger Color"
+            self.btn_color.disabled = False
             self.btn_clear.label = "Reset Trigger Embed"
         elif traffic_event:
             self.btn_channel.label = "Set Traffic Channel"
@@ -166,6 +219,8 @@ class WelcomeDashboardView(discord.ui.View):
             self.btn_images.label = "Edit Traffic Images"
             self.btn_author_footer.label = "Edit Traffic Author & Footer"
             self.btn_fields.label = "Edit Traffic Fields"
+            self.btn_color.label = "Set Traffic Color"
+            self.btn_color.disabled = False
             self.btn_clear.label = "Reset Traffic Embed"
         elif level_up:
             self.btn_channel.label = "Set Level-Up Channel"
@@ -173,7 +228,12 @@ class WelcomeDashboardView(discord.ui.View):
             self.btn_images.label = "Edit Level-Up Images"
             self.btn_author_footer.label = "Edit Level-Up Author & Footer"
             self.btn_fields.label = "Edit Level-Up Fields"
+            self.btn_color.label = "Set Level-Up Color"
+            self.btn_color.disabled = False
             self.btn_clear.label = "Reset Level-Up Embed"
+        else:
+            self.btn_color.label = "Set Welcome Color"
+            self.btn_color.disabled = False
 
     def traffic_label(self) -> str:
         return {
@@ -192,9 +252,46 @@ class WelcomeDashboardView(discord.ui.View):
         return "Welcome"
 
     def modal_title(self, action: str) -> str:
-        if self.trigger_word or self.traffic_event:
+        if self.trigger_word or self.traffic_event or self.level_up:
             return f"{self.context_label()} • {action}"
         return f"{action} Welcome"
+
+    def color_embed_key(self) -> str | None:
+        if self.trigger_word:
+            return None
+        if self.traffic_event:
+            return f"traffic_{self.traffic_event}"
+        if self.level_up:
+            return "level_up_notification"
+        return "welcome_message"
+
+    async def apply_color_value(self, parsed: int | None):
+        guild_id = self.orig_interaction.guild.id
+        if self.trigger_word:
+            # Empty input restores trigger default color.
+            color_value = 0x5865F2 if parsed is None else parsed
+            await self.update_settings(embed_color=color_value)
+            return
+
+        embed_key = self.color_embed_key()
+        if not embed_key:
+            return
+        if parsed is None:
+            await db.reset_embed_color(guild_id, embed_key)
+        else:
+            await db.set_embed_color(guild_id, embed_key, int(parsed))
+
+    async def current_embed_color_value(self) -> int:
+        """Return the effective color value currently used by this dashboard."""
+        if self.trigger_word:
+            configured = self.settings.get('embed_color') if self.settings else None
+            if isinstance(configured, int):
+                return configured
+            # Trigger embeds keep their own built-in default unless explicitly changed.
+            return 0x5865F2
+
+        resolved = await self.embed_color()
+        return int(resolved.value)
 
     async def embed_color(self) -> discord.Color:
         """Return this dashboard's color without borrowing Welcome's color."""
@@ -320,7 +417,10 @@ class WelcomeDashboardView(discord.ui.View):
             embed_data['title'] = self.settings.get('embed_title') or None
             embed_data['description'] = self.settings.get('embed_description') or None
             embed_data['fields'] = self.settings.get('embed_fields', [])
-            embed_data['color'] = self.settings.get('embed_color') or embed_data.get('color')
+            if self.settings.get('embed_color') is not None:
+                embed_data['color'] = int(self.settings['embed_color'])
+            else:
+                embed_data.pop('color', None)
             if self.settings.get('embed_thumbnail'):
                 embed_data['thumbnail'] = {'url': self.settings['embed_thumbnail']}
             else:
@@ -468,7 +568,7 @@ class WelcomeDashboardView(discord.ui.View):
                 description=process_embed_text(welcome.get('embed_description')) or None,
                 color=(
                     discord.Color(welcome['embed_color'])
-                    if self.trigger_word and welcome.get('embed_color')
+                    if self.trigger_word and welcome.get('embed_color') is not None
                     else await self.embed_color()
                 ),
                 timestamp=(
@@ -530,7 +630,7 @@ class WelcomeDashboardView(discord.ui.View):
         emb = discord.Embed(
             title=dashboard_title,
             description=dashboard_description,
-            color=await self.embed_color()
+            color=discord.Color(await self.current_embed_color_value())
         )
         
         if self.trigger_word:
@@ -539,6 +639,24 @@ class WelcomeDashboardView(discord.ui.View):
             ch_id = self.settings.get('channel_id')
             ch_text = f"<#{ch_id}>" if ch_id else "❌ Not Set"
             emb.add_field(name="Target Channel", value=ch_text, inline=False)
+
+        color_value = await self.current_embed_color_value()
+        color_hex = f"#{color_value:06X}"
+        color_info = f"{color_hex} ({color_value})"
+        if self.trigger_word:
+            if isinstance(self.settings.get('embed_color') if self.settings else None, int):
+                color_info += "\nMode: Custom per-trigger"
+            else:
+                color_info += "\nMode: Trigger default"
+        else:
+            embed_key = self.color_embed_key()
+            if embed_key:
+                override = await db.get_embed_color_override(self.orig_interaction.guild.id, embed_key)
+                if override is None:
+                    color_info += "\nMode: Fallback color"
+                else:
+                    color_info += "\nMode: Custom override"
+        emb.add_field(name="Current Embed Color", value=color_info, inline=False)
         
         vars_info = (
             "`{user}` - Mention the user\n"
@@ -612,16 +730,24 @@ class WelcomeDashboardView(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(label="Set Color", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_color(self, interaction: commands.Context, btn: discord.ui.Button):
+        current_color = await self.current_embed_color_value()
+        await interaction.response.send_modal(TriggerColorModal(self, current_color=current_color))
+
     @discord.ui.button(label="Clear Entire Message", style=discord.ButtonStyle.danger, row=2)
     async def btn_clear(self, interaction: commands.Context, btn: discord.ui.Button):
         if self.trigger_word:
             await db.delete_trigger_embed(interaction.guild.id, self.trigger_word)
         elif self.traffic_event:
             await db.reset_traffic_embed_config(interaction.guild.id, self.traffic_event)
+            await db.reset_embed_color(interaction.guild.id, f"traffic_{self.traffic_event}")
         elif self.level_up:
             await db.reset_level_up_embed_config(interaction.guild.id)
+            await db.reset_embed_color(interaction.guild.id, "level_up_notification")
         else:
             await db.remove_welcome_message(interaction.guild.id)
+            await db.reset_embed_color(interaction.guild.id, "welcome_message")
         await self.fetch_state()
         await self.refresh(interaction)
 

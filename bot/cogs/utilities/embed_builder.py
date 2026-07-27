@@ -231,7 +231,7 @@ class EmbedFieldEditorView(discord.ui.View):
             embed.description = 'No fields configured yet.'
         for index, field in enumerate(self.fields[:25], start=1):
             embed.add_field(
-                name=f"{field.get('name', 'Unnamed')}",
+                name=f"{index}. {field.get('name', 'Unnamed')}",
                 value=f"{field.get('value', '-')[:1024]}\nInline: {'Yes' if field.get('inline') else 'No'}",
                 inline=False,
             )
