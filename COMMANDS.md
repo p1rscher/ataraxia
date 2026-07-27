@@ -200,6 +200,29 @@ Delete messages in the current channel.
 
 ## 🤖 Automation
 
+### `/stickymessage` - Bottom Sticky Message
+
+**`/stickymessage set [message_id] [channel]`** 🟠
+Keep a bot-authored message reposted at the bottom of a channel.
+- **Parameters:**
+  - `message_id` - Message ID or Discord link to a bot message; optional if you reply to the bot message
+  - `channel` - The target channel; defaults to the current channel
+
+**`/stickymessage clear [channel]`** 🟠
+Disable the bottom sticky message for a channel.
+- **Parameters:**
+  - `channel` - The target channel; defaults to the current channel
+
+**`/stickymessage status [channel]`** 🟢
+Show the current sticky message configuration for a channel.
+- **Parameters:**
+  - `channel` - The target channel; defaults to the current channel
+
+**`/stickymessage refresh [channel]`** 🟠
+Immediately delete and repost the sticky message in a channel.
+- **Parameters:**
+  - `channel` - The target channel; defaults to the current channel
+
 ### `/autorole` - Auto-Role System
 
 **`/autorole enable`** 🟡

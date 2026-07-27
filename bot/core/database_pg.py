@@ -451,6 +451,25 @@ async def init_db():
                 message_id BIGINT NOT NULL
             )
         """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS sticky_messages (
+                guild_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                source_channel_id BIGINT NOT NULL,
+                source_message_id BIGINT NOT NULL,
+                active_message_id BIGINT,
+                created_by BIGINT,
+                created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC'),
+                updated_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC'),
+                PRIMARY KEY (guild_id, channel_id)
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sticky_messages_guild
+            ON sticky_messages(guild_id)
+        """)
         
         # Stat Channels
         await conn.execute("""
@@ -1283,6 +1302,86 @@ async def get_announcement_channel_id(guild_id: int) -> Optional[int]:
             guild_id
         )
         return row['announcement_channel_id'] if row else None
+
+
+async def set_sticky_message(
+    guild_id: int,
+    channel_id: int,
+    source_channel_id: int,
+    source_message_id: int,
+    *,
+    active_message_id: Optional[int] = None,
+    created_by: Optional[int] = None,
+):
+    """Create or replace the sticky bottom-message configuration for one channel."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO sticky_messages (
+                guild_id, channel_id, source_channel_id, source_message_id, active_message_id, created_by
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (guild_id, channel_id) DO UPDATE SET
+                source_channel_id = EXCLUDED.source_channel_id,
+                source_message_id = EXCLUDED.source_message_id,
+                active_message_id = EXCLUDED.active_message_id,
+                created_by = EXCLUDED.created_by,
+                updated_at = NOW()
+            """,
+            guild_id,
+            channel_id,
+            source_channel_id,
+            source_message_id,
+            active_message_id,
+            created_by,
+        )
+
+
+async def get_sticky_message(guild_id: int, channel_id: int) -> Optional[dict]:
+    """Return the sticky configuration for one channel."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM sticky_messages WHERE guild_id = $1 AND channel_id = $2",
+            guild_id,
+            channel_id,
+        )
+    return dict(row) if row else None
+
+
+async def get_sticky_messages(guild_id: int) -> list[dict]:
+    """Return all sticky configurations for one guild."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM sticky_messages WHERE guild_id = $1 ORDER BY channel_id",
+            guild_id,
+        )
+    return [dict(row) for row in rows]
+
+
+async def update_sticky_message_active_id(guild_id: int, channel_id: int, active_message_id: Optional[int]):
+    """Update the currently posted sticky message ID for one channel."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE sticky_messages
+            SET active_message_id = $3,
+                updated_at = NOW()
+            WHERE guild_id = $1 AND channel_id = $2
+            """,
+            guild_id,
+            channel_id,
+            active_message_id,
+        )
+
+
+async def clear_sticky_message(guild_id: int, channel_id: int):
+    """Remove the sticky configuration for one channel."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM sticky_messages WHERE guild_id = $1 AND channel_id = $2",
+            guild_id,
+            channel_id,
+        )
 
 async def get_all_announcement_channels() -> list[dict]:
     """Get all guilds that have an announcement channel configured"""
