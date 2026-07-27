@@ -6,7 +6,15 @@ import logging
 from typing import Optional
 import io
 from core import database_pg as db
-from utils.embeds import get_embed_color
+from utils.embeds import (
+    get_embed_color,
+    has_time_placeholder,
+    normalize_embed_fields,
+    process_member_text,
+    set_embed_footer,
+)
+from cogs.utilities.embed_builder import EmbedBuilderView
+from cogs.server_management.welcome import WelcomeDashboardView
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +42,89 @@ async def create_transcript_bytes(channel: discord.TextChannel) -> io.BytesIO:
     file_bytes = io.BytesIO(transcript.encode('utf-8'))
     file_bytes.seek(0)
     return file_bytes
+
+
+async def build_ticket_open_payload(
+    guild: discord.Guild,
+    member: discord.Member,
+    ticket_channel: discord.TextChannel,
+    ticket_id: int,
+    support_role: Optional[discord.Role],
+) -> tuple[Optional[str], discord.Embed]:
+    config = await db.get_ticket_open_message_config(guild.id) or {}
+    event_time = discord.utils.utcnow()
+    extra_values = {
+        "event": "ticket_open",
+        "ticket_id": str(ticket_id),
+        "support_role": support_role.mention if support_role else "",
+        "ticket_channel": ticket_channel.mention,
+    }
+
+    def render(value: Optional[str], *, footer: bool = False) -> Optional[str]:
+        if not value:
+            return None
+        return process_member_text(
+            value,
+            member,
+            event_time=event_time,
+            time_value="" if footer else None,
+            extra_values=extra_values,
+        ) or None
+
+    default_title = "Ticket #{ticket_id}"
+    default_description = "Welcome {user}!\n\nPlease describe your issue and our support team will be with you shortly."
+    raw_fields = normalize_embed_fields(config.get("fields"))
+
+    title = config.get("title") if config else default_title
+    description = config.get("description") if config else default_description
+    embed_values = [
+        title,
+        description,
+        config.get("author_name"),
+        config.get("author_icon"),
+        config.get("thumbnail"),
+        config.get("image"),
+        config.get("footer_text"),
+        config.get("footer_icon"),
+    ]
+
+    embed = discord.Embed(
+        title=render(title),
+        description=render(description),
+        color=await get_embed_color(guild.id, "ticket_open_message", "color_ticket"),
+        timestamp=(
+            event_time
+            if bool(config.get("timestamp_enabled", False)) or has_time_placeholder(*embed_values)
+            else None
+        ),
+    )
+
+    if config.get("author_name"):
+        embed.set_author(
+            name=render(config.get("author_name")) or " ",
+            icon_url=render(config.get("author_icon")),
+        )
+    if config.get("thumbnail"):
+        embed.set_thumbnail(url=render(config.get("thumbnail")))
+    if config.get("image"):
+        embed.set_image(url=render(config.get("image")))
+    set_embed_footer(
+        embed,
+        text=render(config.get("footer_text"), footer=True),
+        icon_url=render(config.get("footer_icon")),
+    )
+
+    for field in raw_fields[:25]:
+        if not isinstance(field, dict) or not field.get("name"):
+            continue
+        embed.add_field(
+            name=render(field.get("name")) or "Field",
+            value=(render(field.get("value")) or "-")[:1024],
+            inline=bool(field.get("inline", False)),
+        )
+
+    content = render(config.get("content")) if config else None
+    return content, embed
 
 class TicketActiveView(discord.ui.View):
     def __init__(self):
@@ -180,17 +271,20 @@ class TicketPanelView(discord.ui.View):
         safe_name = f"ticket-{clean_name}-{ticket_id}"
         await ticket_channel.edit(name=safe_name)
 
-        embed = discord.Embed(
-            title=f"Ticket #{ticket_id}",
-            description=f"Welcome {member.mention}!\n\nPlease describe your issue and our support team will be with you shortly.",
-            color=await get_embed_color(interaction.guild.id, 'ticket_panel', 'color_ticket')
+        custom_content, embed = await build_ticket_open_payload(
+            interaction.guild,
+            member,
+            ticket_channel,
+            ticket_id,
+            support_role,
         )
         
         ping_content = f"{member.mention}"
         if support_role:
             ping_content += f" {support_role.mention}"
             
-        await ticket_channel.send(content=ping_content, embed=embed, view=TicketActiveView())
+        full_content = ping_content if not custom_content else f"{ping_content}\n{custom_content}"
+        await ticket_channel.send(content=full_content, embed=embed, view=TicketActiveView())
         
         await send_interaction_message(interaction, f"✅ Ticket created: {ticket_channel.mention}", ephemeral=True)
 
@@ -230,30 +324,188 @@ class TicketCog(commands.Cog):
         
         await interaction.send(embed=embed, ephemeral=True)
 
-    @ticket_group.command(name="panel", description="Deploy the ticket creation panel")
-    @app_commands.describe(
-        channel="Channel to deploy the panel in",
-        title="Title of the embed",
-        description="Description of the embed"
-    )
+    @ticket_group.command(name="opendashboard", description="Customize the message sent when a ticket is opened")
     @commands.has_permissions(administrator=True)
-    async def ticket_panel(self, interaction: commands.Context, channel: discord.TextChannel, title: str = "Support Tickets", description: str = "Click the button below to open a private ticket."):
+    async def ticket_open_dashboard(self, ctx: commands.Context):
+        editor = WelcomeDashboardView(self, ctx, ticket_open=True)
+        await editor.fetch_state()
+        await ctx.send(embed=await editor._build_editor_embed(), view=editor, ephemeral=True)
+
+        content, preview_embed = await editor._build_preview(ctx, preview_mode=True)
+        editor.preview_message = await ctx.send(
+            content=content or "**Live Preview:**",
+            embed=preview_embed,
+            ephemeral=True,
+        )
+
+    @ticket_group.command(name="openpreview", description="Preview the configured ticket-open message")
+    @commands.has_permissions(administrator=True)
+    async def ticket_open_preview(self, ctx: commands.Context):
+        if not ctx.guild or not isinstance(ctx.author, discord.Member):
+            return await ctx.send("❌ This command can only be used in a server.", ephemeral=True)
+
+        settings = await db.get_ticket_settings(ctx.guild.id)
+        support_role = None
+        if settings and settings.get('support_role_id'):
+            support_role = ctx.guild.get_role(settings['support_role_id'])
+
+        ticket_channel = ctx.channel if isinstance(ctx.channel, discord.TextChannel) else None
+        if not ticket_channel:
+            return await ctx.send("❌ This preview requires a regular text channel.", ephemeral=True)
+
+        custom_content, preview_embed = await build_ticket_open_payload(
+            ctx.guild,
+            ctx.author,
+            ticket_channel,
+            9999,
+            support_role,
+        )
+
+        ping_content = f"{ctx.author.mention}"
+        if support_role:
+            ping_content += f" {support_role.mention}"
+
+        full_content = ping_content if not custom_content else f"{ping_content}\n{custom_content}"
+        await ctx.send(
+            content=f"**Ticket Open Preview**\n{full_content}",
+            embed=preview_embed,
+            ephemeral=True,
+        )
+
+    @ticket_group.command(name="panel", description="Deploy a fully customizable ticket panel with the Embed Builder")
+    @app_commands.describe(channel="Channel to deploy the panel in")
+    @commands.has_permissions(administrator=True)
+    async def ticket_panel(self, interaction: commands.Context, channel: discord.TextChannel):
         if not channel.permissions_for(interaction.guild.me).send_messages:
             return await interaction.send(f"❌ I don't have permission to write in {channel.mention}.", ephemeral=True)
-            
+
         settings = await db.get_ticket_settings(interaction.guild.id)
         if not settings or not settings.get('category_id'):
             return await interaction.send("❌ You must run `/ticket setup` before deploying a panel.", ephemeral=True)
 
-        embed = discord.Embed(
-            title=title,
-            description=description,
+        initial_embed = discord.Embed(
+            title="Support Tickets",
+            description="Click the button below to open a private ticket.",
             color=await get_embed_color(interaction.guild.id, 'ticket_panel', 'color_ticket')
         )
-        
-        msg = await channel.send(embed=embed, view=TicketPanelView())
-        await db.add_ticket_panel(msg.id, interaction.guild.id, channel.id, title, description)
-        await interaction.send(f"✅ Ticket panel deployed to {channel.mention}", ephemeral=True)
+
+        async def save_panel(panel_embed: discord.Embed):
+            sent = await channel.send(embed=panel_embed, view=TicketPanelView())
+            await db.add_ticket_panel(
+                sent.id,
+                interaction.guild.id,
+                channel.id,
+                panel_embed.title or "Support Tickets",
+                panel_embed.description or "Click the button below to open a private ticket.",
+            )
+
+        view = EmbedBuilderView(
+            target_channel=channel,
+            initial_embed=initial_embed,
+            save_callback=save_panel,
+        )
+        await interaction.send(
+            "🛠️ **Ticket Panel Builder**\n*Preview:*",
+            embed=initial_embed,
+            view=view,
+            ephemeral=True,
+        )
+
+    @ticket_group.command(name="paneledit", description="Edit an existing ticket panel message with the Embed Builder")
+    @app_commands.describe(
+        channel="Channel that contains the panel message",
+        message_id="ID of the ticket panel message to edit",
+    )
+    @commands.has_permissions(administrator=True)
+    async def ticket_panel_edit(self, interaction: commands.Context, channel: discord.TextChannel, message_id: str):
+        if not channel.permissions_for(interaction.guild.me).read_message_history:
+            return await interaction.send(f"❌ I can't read message history in {channel.mention}.", ephemeral=True)
+
+        try:
+            message_id_int = int(message_id)
+        except ValueError:
+            return await interaction.send("❌ Invalid message ID formatting.", ephemeral=True)
+
+        panel_record = await db.get_ticket_panel(message_id_int)
+        if not panel_record or panel_record.get('guild_id') != interaction.guild.id:
+            return await interaction.send("❌ This message is not a registered ticket panel in this server.", ephemeral=True)
+
+        if panel_record.get('channel_id') != channel.id:
+            return await interaction.send("❌ The message ID is not registered for the selected channel.", ephemeral=True)
+
+        try:
+            target_msg = await channel.fetch_message(message_id_int)
+        except discord.NotFound:
+            return await interaction.send("❌ Panel message not found in that channel.", ephemeral=True)
+        except discord.Forbidden:
+            return await interaction.send("❌ I can't fetch that message in the selected channel.", ephemeral=True)
+
+        if target_msg.author.id != self.bot.user.id:
+            return await interaction.send("❌ I can only edit my own panel messages.", ephemeral=True)
+
+        if target_msg.components:
+            has_ticket_button = any(
+                getattr(component, 'custom_id', None) == 'ticket_create_btn'
+                for row in target_msg.components
+                for component in row.children
+            )
+            if not has_ticket_button:
+                return await interaction.send("❌ This message does not contain the ticket panel button.", ephemeral=True)
+
+        initial_embed = (
+            discord.Embed.from_dict(target_msg.embeds[0].to_dict())
+            if target_msg.embeds
+            else discord.Embed(
+                title=panel_record.get('title') or "Support Tickets",
+                description=panel_record.get('description') or "Click the button below to open a private ticket.",
+                color=await get_embed_color(interaction.guild.id, 'ticket_panel', 'color_ticket'),
+            )
+        )
+
+        async def save_panel(panel_embed: discord.Embed):
+            await target_msg.edit(embed=panel_embed, view=TicketPanelView())
+            await db.update_ticket_panel(
+                target_msg.id,
+                panel_embed.title or "Support Tickets",
+                panel_embed.description or "Click the button below to open a private ticket.",
+            )
+
+        view = EmbedBuilderView(
+            target_channel=channel,
+            initial_embed=initial_embed,
+            save_callback=save_panel,
+        )
+        await interaction.send(
+            "🛠️ **Ticket Panel Editor**\n*Preview:*",
+            embed=initial_embed,
+            view=view,
+            ephemeral=True,
+        )
+
+    @ticket_group.command(name="panellist", description="List all registered ticket panel messages")
+    @commands.has_permissions(administrator=True)
+    async def ticket_panel_list(self, interaction: commands.Context):
+        panels = await db.get_ticket_panels(interaction.guild.id)
+        if not panels:
+            await interaction.send("ℹ️ No ticket panels are registered in this server.", ephemeral=True)
+            return
+
+        lines = []
+        for index, panel in enumerate(panels[:25], start=1):
+            channel = interaction.guild.get_channel(panel['channel_id'])
+            channel_text = channel.mention if channel else f"<#{panel['channel_id']}>"
+            jump_url = f"https://discord.com/channels/{interaction.guild.id}/{panel['channel_id']}/{panel['message_id']}"
+            lines.append(
+                f"{index}. Channel: {channel_text} | Message: `{panel['message_id']}` | [Jump]({jump_url})"
+            )
+
+        embed = discord.Embed(
+            title="🎫 Ticket Panels",
+            description="\n".join(lines),
+            color=await get_embed_color(interaction.guild.id, 'ticket_panel', 'color_ticket'),
+        )
+        embed.set_footer(text="Use /ticket paneledit to edit one specific panel message.")
+        await interaction.send(embed=embed, ephemeral=True)
 
     @ticket_group.command(name="add", description="Add a user to the current ticket")
     @app_commands.describe(user="The user to add")

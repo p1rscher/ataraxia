@@ -109,6 +109,7 @@ def member_template_values(
         "{user.avatar}": member.display_avatar.url,
         "{server}": member.guild.name,
         "{server.icon}": member.guild.icon.url if member.guild.icon else "",
+        "{server.avatar}": member.guild.icon.url if member.guild.icon else "",
         "{member_count}": str(count),
         "{member_count_ext}": ordinal(count),
         "{time}": f"<t:{int(event_time.timestamp())}:F>",

@@ -223,6 +223,33 @@ Immediately delete and repost the sticky message in a channel.
 - **Parameters:**
   - `channel` - The target channel; defaults to the current channel
 
+### `/ticket` - Ticket System
+
+**`/ticket setup [category] [support_role] [closer_role] [max_tickets]`** 🟠
+Configure the ticket system basics (category, support permissions, limits).
+
+**`/ticket panel [channel]`** 🟠
+Open the full Embed Builder and deploy a customizable ticket panel with the ticket button.
+
+**`/ticket paneledit [channel] [message_id]`** 🟠
+Open the full Embed Builder for an existing ticket panel message.
+
+**`/ticket panellist`** 🟠
+List all registered ticket panel messages with channel, message ID, and jump link.
+
+**`/ticket opendashboard`** 🟠
+Open the dashboard for the message sent when a ticket is created.
+Supports placeholders like `{server}`, `{server.icon}`, `{server.avatar}`, `{time}`, `{user}`, `{user.avatar}`, `{ticket_id}`, `{support_role}`, `{ticket_channel}`.
+
+**`/ticket openpreview`** 🟠
+Show an ephemeral preview of the current ticket-open message configuration (without creating a ticket).
+
+**`/ticket add [user]`** 🟠
+Add a user to the current ticket channel.
+
+**`/ticket remove [user]`** 🟠
+Remove a user from the current ticket channel.
+
 ### `/autorole` - Auto-Role System
 
 **`/autorole enable`** 🟡

@@ -741,6 +741,23 @@ async def init_db():
             )
         """)
 
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_open_message_configs (
+                guild_id BIGINT PRIMARY KEY,
+                content TEXT,
+                title TEXT,
+                description TEXT,
+                author_name TEXT,
+                author_icon TEXT,
+                footer_text TEXT,
+                footer_icon TEXT,
+                thumbnail TEXT,
+                image TEXT,
+                fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+                timestamp_enabled BOOLEAN NOT NULL DEFAULT FALSE
+            )
+        """)
+
         # Add color_verification column if it doesn't exist
         try:
             await conn.execute("ALTER TABLE embed_colors ADD COLUMN IF NOT EXISTS color_verification INTEGER NOT NULL DEFAULT 5793266")
@@ -3428,6 +3445,55 @@ async def reset_level_up_embed_config(guild_id: int):
         )
 
 
+async def get_ticket_open_message_config(guild_id: int) -> Optional[dict]:
+    """Return the custom configuration for the ticket-open message."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM ticket_open_message_configs WHERE guild_id = $1",
+            guild_id,
+        )
+    return dict(row) if row else None
+
+
+async def set_ticket_open_message_config(guild_id: int, **values):
+    """Upsert only the supplied fields of the ticket-open message config."""
+    allowed = {
+        'content', 'title', 'description', 'author_name', 'author_icon',
+        'footer_text', 'footer_icon', 'thumbnail', 'image',
+        'fields', 'timestamp_enabled',
+    }
+    values = {key: value for key, value in values.items() if key in allowed}
+    if not values:
+        return
+    if 'fields' in values:
+        values['fields'] = json.dumps(values['fields'])
+
+    columns = ['guild_id', *values.keys()]
+    placeholders = [
+        f"${index}::jsonb" if column == 'fields' else f"${index}"
+        for index, column in enumerate(columns, start=1)
+    ]
+    assignments = ', '.join(
+        f"{column} = EXCLUDED.{column}" for column in values
+    )
+    query = (
+        f"INSERT INTO ticket_open_message_configs ({', '.join(columns)}) "
+        f"VALUES ({', '.join(placeholders)}) "
+        f"ON CONFLICT (guild_id) DO UPDATE SET {assignments}"
+    )
+    async with _pool.acquire() as conn:
+        await conn.execute(query, guild_id, *values.values())
+
+
+async def reset_ticket_open_message_config(guild_id: int):
+    """Restore ticket-open message behavior to built-in defaults."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM ticket_open_message_configs WHERE guild_id = $1",
+            guild_id,
+        )
+
+
 # ==================== MODERATION ====================
 
 async def add_warning(guild_id: int, user_id: int, moderator_id: int, reason: str) -> int:
@@ -4197,6 +4263,20 @@ async def add_ticket_panel(message_id: int, guild_id: int, channel_id: int, titl
             INSERT INTO ticket_panels (message_id, guild_id, channel_id, title, description)
             VALUES ($1, $2, $3, $4, $5)
         """, message_id, guild_id, channel_id, title, description)
+
+async def get_ticket_panel(message_id: int):
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM ticket_panels WHERE message_id = $1", message_id)
+        return dict(row) if row else None
+
+async def update_ticket_panel(message_id: int, title: str, description: str):
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE ticket_panels SET title = $2, description = $3 WHERE message_id = $1",
+            message_id,
+            title,
+            description,
+        )
 
 async def get_ticket_panels(guild_id: int):
     async with _pool.acquire() as conn:
