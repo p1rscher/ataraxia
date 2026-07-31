@@ -549,10 +549,11 @@ Der Bot kann auf Basis echter Nutzer-Nachrichten eine eigene Chat-Persönlichkei
 - `/chatpersona stickerchance percent:0-100` - Zufallschance für Sticker einstellen
 - `/chatpersona cooldown seconds:0-3600` - Mindestabstand zwischen spontanen Bot-Nachrichten
 - `/chatpersona stickercooldown seconds:0-7200` - Mindestabstand zwischen Sticker-Nachrichten pro Channel
-- `/chatpersona blacklist add channel:#chat target:text|gif|sticker|all` - Channel für bestimmte Antworttypen blockieren
-- `/chatpersona blacklist remove channel:#chat target:text|gif|sticker|all` - Channel aus einer Blacklist entfernen
-- `/chatpersona blacklist list` - aktuelle Channel-Blacklists für Text, GIF und Sticker anzeigen
-- `/chatpersona blacklist clear target:text|gif|sticker|all` - eine oder alle Channel-Blacklists leeren
+- `/chatpersona blacklist mode target:text|gif|sticker|all mode:blacklist|whitelist` - Modus wählen: blacklist = gelistete Channels blockieren, whitelist = nur gelistete Channels erlauben
+- `/chatpersona blacklist add channel:#chat target:text|gif|sticker|all` - Channel zur jeweiligen Liste hinzufügen
+- `/chatpersona blacklist remove channel:#chat target:text|gif|sticker|all` - Channel aus der jeweiligen Liste entfernen
+- `/chatpersona blacklist list` - aktuelle Modi und Channel-Listen für Text, GIF und Sticker anzeigen
+- `/chatpersona blacklist clear target:text|gif|sticker|all` - Channel-Liste für einen oder alle Typen leeren
 - `/chatpersona language mode:auto|default_en` - Sprachmodus: automatisch erkennen oder Englisch erzwingen
 - `/chatpersona traits nice:0-100 romantic:0-100 funny:0-100 chaotic:0-100` - Persönlichkeit steuern
 - `/chatpersona profanity enabled:true|false` - schlimme Wörter erlauben/verbieten

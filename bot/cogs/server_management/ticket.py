@@ -307,7 +307,13 @@ class TicketCog(commands.Cog):
         max_tickets="Maximum number of open tickets a user can have at once (default: 1)"
     )
     @commands.has_permissions(administrator=True)
-    async def ticket_setup(self, interaction: commands.Context, category: discord.CategoryChannel, support_role: discord.Role, closer_role: Optional[discord.Role] = None, max_tickets: int = 1):
+    async def ticket_setup(self, interaction: commands.Context, category: discord.abc.GuildChannel, support_role: discord.Role, closer_role: Optional[discord.Role] = None, max_tickets: int = 1):
+        if not isinstance(category, discord.CategoryChannel):
+            return await interaction.send(
+                "❌ Please select a **category channel** for `category` (not a text/voice channel).",
+                ephemeral=True,
+            )
+
         closer_id = closer_role.id if closer_role else None
         await db.set_ticket_settings(interaction.guild.id, category.id, support_role.id, closer_id, max_tickets)
         

@@ -35,6 +35,11 @@ BLACKLIST_TARGET_CHOICES = [
     app_commands.Choice(name="All", value="all"),
 ]
 
+FILTER_MODE_CHOICES = [
+    app_commands.Choice(name="Blacklist", value="blacklist"),
+    app_commands.Choice(name="Whitelist", value="whitelist"),
+]
+
 CUSTOM_EMOJI_RE = re.compile(r"<a?:\w{2,32}:\d{17,20}>")
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9_']{3,}", re.UNICODE)
@@ -84,7 +89,7 @@ class ChatPersonalityCog(commands.Cog):
             return False
         return True
 
-    @chatpersona_group.group(name="blacklist", description="Manage channel blacklists for text, GIF, and sticker outputs")
+    @chatpersona_group.group(name="blacklist", description="Manage channel filter lists for text, GIF, and sticker outputs")
     @commands.has_permissions(administrator=True)
     async def blacklist_group(self, ctx: commands.Context):
         pass
@@ -132,7 +137,7 @@ class ChatPersonalityCog(commands.Cog):
         blocked_channels = self._format_blacklist_targets(ctx.guild, settings)
         embed.add_field(name="Top learned words", value=top_words[:1024], inline=False)
         embed.add_field(name="Top learned emojis", value=top_emojis[:1024], inline=False)
-        embed.add_field(name="Blacklisted channels", value=blocked_channels[:1024], inline=False)
+        embed.add_field(name="Channel filter lists", value=blocked_channels[:1024], inline=False)
 
         await ctx.send(embed=embed, ephemeral=True)
 
@@ -197,8 +202,8 @@ class ChatPersonalityCog(commands.Cog):
         await db.update_chat_personality_settings(ctx.guild.id, sticker_cooldown_seconds=int(seconds))
         await ctx.send(f"✅ Sticker cooldown set to {int(seconds)}s.", ephemeral=True)
 
-    @blacklist_group.command(name="add", description="Block one channel for text, GIF, sticker, or all outputs")
-    @app_commands.describe(channel="Channel to blacklist", target="Which output type should be blocked")
+    @blacklist_group.command(name="add", description="Add one channel to the filter list for text, GIF, sticker, or all outputs")
+    @app_commands.describe(channel="Channel to add to the list", target="Which output type should be affected")
     @app_commands.choices(target=BLACKLIST_TARGET_CHOICES)
     async def blacklist_add(self, ctx: commands.Context, channel: discord.TextChannel, target: str):
         if not await self._require_admin(ctx):
@@ -220,15 +225,15 @@ class ChatPersonalityCog(commands.Cog):
         if updates:
             await db.update_chat_personality_settings(ctx.guild.id, **updates)
         if added and not already_blocked:
-            await ctx.send(f"✅ {channel.mention} was blacklisted for: {', '.join(added)}.", ephemeral=True)
+            await ctx.send(f"✅ {channel.mention} was added to the channel list for: {', '.join(added)}.", ephemeral=True)
             return
         if added:
-            await ctx.send(f"✅ {channel.mention} was blacklisted for: {', '.join(added)}. Already blocked: {', '.join(already_blocked)}.", ephemeral=True)
+            await ctx.send(f"✅ {channel.mention} was added to the channel list for: {', '.join(added)}. Already listed: {', '.join(already_blocked)}.", ephemeral=True)
             return
-        await ctx.send(f"ℹ️ {channel.mention} is already blacklisted for: {', '.join(already_blocked)}.", ephemeral=True)
+        await ctx.send(f"ℹ️ {channel.mention} is already in the channel list for: {', '.join(already_blocked)}.", ephemeral=True)
 
-    @blacklist_group.command(name="remove", description="Remove one channel from a text, GIF, sticker, or all blacklist")
-    @app_commands.describe(channel="Channel to un-blacklist", target="Which output type should be unblocked")
+    @blacklist_group.command(name="remove", description="Remove one channel from the filter list for text, GIF, sticker, or all outputs")
+    @app_commands.describe(channel="Channel to remove from the list", target="Which output type should be affected")
     @app_commands.choices(target=BLACKLIST_TARGET_CHOICES)
     async def blacklist_remove(self, ctx: commands.Context, channel: discord.TextChannel, target: str):
         if not await self._require_admin(ctx):
@@ -253,22 +258,22 @@ class ChatPersonalityCog(commands.Cog):
             await ctx.send(f"✅ {channel.mention} was removed from: {', '.join(removed)}.", ephemeral=True)
             return
         if removed:
-            await ctx.send(f"✅ {channel.mention} was removed from: {', '.join(removed)}. Not blocked in: {', '.join(missing)}.", ephemeral=True)
+            await ctx.send(f"✅ {channel.mention} was removed from: {', '.join(removed)}. Not listed in: {', '.join(missing)}.", ephemeral=True)
             return
-        await ctx.send(f"ℹ️ {channel.mention} is not blacklisted for: {', '.join(missing)}.", ephemeral=True)
+        await ctx.send(f"ℹ️ {channel.mention} is not listed for: {', '.join(missing)}.", ephemeral=True)
 
-    @blacklist_group.command(name="list", description="List all blacklisted channels for text, GIF, and sticker outputs")
+    @blacklist_group.command(name="list", description="List channel filter mode and channels for text, GIF, and sticker outputs")
     async def blacklist_list(self, ctx: commands.Context):
         if not await self._require_admin(ctx):
             return
         settings = await db.get_or_create_chat_personality_settings(ctx.guild.id)
         await ctx.send(
-            f"**Chat blacklists:** {self._format_blacklist_targets(ctx.guild, settings)}",
+            f"**Chat channel filters:** {self._format_blacklist_targets(ctx.guild, settings)}",
             ephemeral=True,
         )
 
-    @blacklist_group.command(name="clear", description="Clear blacklisted channels for one output type or all")
-    @app_commands.describe(target="Which output type blacklist should be cleared")
+    @blacklist_group.command(name="clear", description="Clear listed channels for one output type or all")
+    @app_commands.describe(target="Which output type list should be cleared")
     @app_commands.choices(target=BLACKLIST_TARGET_CHOICES)
     async def blacklist_clear(self, ctx: commands.Context, target: str):
         if not await self._require_admin(ctx):
@@ -276,7 +281,29 @@ class ChatPersonalityCog(commands.Cog):
         await db.get_or_create_chat_personality_settings(ctx.guild.id)
         updates = {self._blacklist_key(name): [] for name in self._targets_from_choice(target)}
         await db.update_chat_personality_settings(ctx.guild.id, **updates)
-        await ctx.send(f"✅ Cleared blacklist for: {', '.join(self._targets_from_choice(target))}.", ephemeral=True)
+        await ctx.send(f"✅ Cleared channel list for: {', '.join(self._targets_from_choice(target))}.", ephemeral=True)
+
+    @blacklist_group.command(name="mode", description="Set channel filter mode to blacklist or whitelist")
+    @app_commands.describe(target="Which output type should use this mode", mode="blacklist = block listed channels, whitelist = allow only listed channels")
+    @app_commands.choices(target=BLACKLIST_TARGET_CHOICES, mode=FILTER_MODE_CHOICES)
+    async def blacklist_mode(self, ctx: commands.Context, target: str, mode: str):
+        if not await self._require_admin(ctx):
+            return
+
+        if mode not in {"blacklist", "whitelist"}:
+            await ctx.send("❌ Invalid mode. Use blacklist or whitelist.", ephemeral=True)
+            return
+
+        await db.get_or_create_chat_personality_settings(ctx.guild.id)
+        updates = {
+            self._filter_mode_key(name): mode
+            for name in self._targets_from_choice(target)
+        }
+        await db.update_chat_personality_settings(ctx.guild.id, **updates)
+        await ctx.send(
+            f"✅ Channel filter mode set to `{mode}` for: {', '.join(self._targets_from_choice(target))}.",
+            ephemeral=True,
+        )
 
     @chatpersona_group.command(name="language", description="Set language behavior for generated chat messages")
     @app_commands.describe(mode="auto = detect chat language, default_en = keep English by default")
@@ -421,7 +448,7 @@ class ChatPersonalityCog(commands.Cog):
             if not settings.get("enabled", False):
                 return
 
-            text_blocked = self._is_channel_blacklisted(settings, "text", message.channel.id)
+            text_blocked = self._is_channel_filtered(settings, "text", message.channel.id)
 
             is_reply_to_bot = await self._is_reply_to_bot_message(message)
             should_reply = bool(is_reply_to_bot and settings.get("reply_always", True) and not text_blocked)
@@ -547,12 +574,25 @@ class ChatPersonalityCog(commands.Cog):
     def _blacklist_key(self, target: str) -> str:
         return f"{target}_blocked_channel_ids"
 
+    def _filter_mode_key(self, target: str) -> str:
+        return f"{target}_channel_filter_mode"
+
+    def _get_filter_mode(self, settings: dict, target: str) -> str:
+        mode = str(settings.get(self._filter_mode_key(target), "blacklist") or "blacklist").strip().lower()
+        if mode not in {"blacklist", "whitelist"}:
+            return "blacklist"
+        return mode
+
     def _get_blacklisted_channel_ids(self, settings: dict, target: str) -> list[int]:
         raw_ids = settings.get(self._blacklist_key(target)) or []
         return [int(channel_id) for channel_id in raw_ids if str(channel_id).isdigit()]
 
-    def _is_channel_blacklisted(self, settings: dict, target: str, channel_id: int) -> bool:
-        return channel_id in self._get_blacklisted_channel_ids(settings, target)
+    def _is_channel_filtered(self, settings: dict, target: str, channel_id: int) -> bool:
+        listed = channel_id in self._get_blacklisted_channel_ids(settings, target)
+        mode = self._get_filter_mode(settings, target)
+        if mode == "whitelist":
+            return not listed
+        return listed
 
     def _format_channel_mentions(self, guild: discord.Guild, channel_ids: list[int]) -> str:
         if not channel_ids:
@@ -566,10 +606,18 @@ class ChatPersonalityCog(commands.Cog):
         return ", ".join(labels)
 
     def _format_blacklist_targets(self, guild: discord.Guild, settings: dict) -> str:
+        text_mode = self._get_filter_mode(settings, "text")
+        gif_mode = self._get_filter_mode(settings, "gif")
+        sticker_mode = self._get_filter_mode(settings, "sticker")
+
         text_channels = self._format_channel_mentions(guild, self._get_blacklisted_channel_ids(settings, "text"))
         gif_channels = self._format_channel_mentions(guild, self._get_blacklisted_channel_ids(settings, "gif"))
         sticker_channels = self._format_channel_mentions(guild, self._get_blacklisted_channel_ids(settings, "sticker"))
-        return f"Text: {text_channels}\nGIF: {gif_channels}\nSticker: {sticker_channels}"
+        return (
+            f"Text ({text_mode}): {text_channels}\n"
+            f"GIF ({gif_mode}): {gif_channels}\n"
+            f"Sticker ({sticker_mode}): {sticker_channels}"
+        )
 
     def _extract_words(self, text: str) -> list[str]:
         if not text:
@@ -706,7 +754,7 @@ class ChatPersonalityCog(commands.Cog):
         if not sticker_rows:
             return None
 
-        if self._is_channel_blacklisted(settings, "sticker", channel_id):
+        if self._is_channel_filtered(settings, "sticker", channel_id):
             return None
 
         sticker_cooldown_seconds = max(0, int(settings.get("sticker_cooldown_seconds", 600) or 600))
@@ -913,7 +961,7 @@ class ChatPersonalityCog(commands.Cog):
             msg = random.choice(["valid", "same", "I feel that", "okay yeah", "mood"])
 
         gif_chance = float(settings.get("gif_chance", 0.08) or 0.08)
-        if not self._is_channel_blacklisted(settings, "gif", channel_id):
+        if not self._is_channel_filtered(settings, "gif", channel_id):
             if any("gif" in word.casefold() for word in incoming_words) or "tenor.com" in incoming_text.lower() or "giphy.com" in incoming_text.lower():
                 gif_chance = min(1.0, gif_chance * 2.5)
         else:

@@ -108,6 +108,31 @@ async def on_ready():
     await sync_voice_sessions_on_startup(bot)
 
     from core import database_pg as db
+    from events import on_guild_join as on_guild_join_event
+
+    logger.info("on_ready: Reconciling offline-added guilds...")
+    try:
+        connected_guild_ids = [g.id for g in bot.guilds]
+        tracked_ids = await db.get_tracked_server_ids(connected_guild_ids)
+        missing_guilds = [g for g in bot.guilds if g.id not in tracked_ids]
+
+        if missing_guilds:
+            logger.info(
+                "on_ready: Found %d guild(s) missing in discord_servers; running join initialization.",
+                len(missing_guilds),
+            )
+            for guild in missing_guilds:
+                await on_guild_join_event.initialize_guild_join_state(
+                    guild,
+                    run_intro=True,
+                    run_backfill=False,
+                    run_command_sync=False,
+                )
+        else:
+            logger.info("on_ready: No missing guild entries detected.")
+    except Exception as e:
+        logger.error(f"on_ready: Failed guild reconciliation step: {e}")
+
     logger.info("on_ready: Backfilling discord_users database...")
     try:
         await db.bulk_upsert_users(bot.users)

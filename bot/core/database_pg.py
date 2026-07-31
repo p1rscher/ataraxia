@@ -332,6 +332,9 @@ async def init_db():
                 text_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[],
                 gif_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[],
                 sticker_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[],
+                text_channel_filter_mode TEXT NOT NULL DEFAULT 'blacklist',
+                gif_channel_filter_mode TEXT NOT NULL DEFAULT 'blacklist',
+                sticker_channel_filter_mode TEXT NOT NULL DEFAULT 'blacklist',
                 language_mode TEXT NOT NULL DEFAULT 'auto',
                 reply_always BOOLEAN NOT NULL DEFAULT TRUE,
                 allow_profanity BOOLEAN NOT NULL DEFAULT FALSE,
@@ -378,6 +381,33 @@ async def init_db():
         await conn.execute(
             "ALTER TABLE chat_personality_settings "
             "ADD COLUMN IF NOT EXISTS sticker_blocked_channel_ids BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[]"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS text_channel_filter_mode TEXT NOT NULL DEFAULT 'blacklist'"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS gif_channel_filter_mode TEXT NOT NULL DEFAULT 'blacklist'"
+        )
+        await conn.execute(
+            "ALTER TABLE chat_personality_settings "
+            "ADD COLUMN IF NOT EXISTS sticker_channel_filter_mode TEXT NOT NULL DEFAULT 'blacklist'"
+        )
+        await conn.execute(
+            "UPDATE chat_personality_settings "
+            "SET text_channel_filter_mode = 'blacklist' "
+            "WHERE text_channel_filter_mode IS NULL OR text_channel_filter_mode NOT IN ('blacklist', 'whitelist')"
+        )
+        await conn.execute(
+            "UPDATE chat_personality_settings "
+            "SET gif_channel_filter_mode = 'blacklist' "
+            "WHERE gif_channel_filter_mode IS NULL OR gif_channel_filter_mode NOT IN ('blacklist', 'whitelist')"
+        )
+        await conn.execute(
+            "UPDATE chat_personality_settings "
+            "SET sticker_channel_filter_mode = 'blacklist' "
+            "WHERE sticker_channel_filter_mode IS NULL OR sticker_channel_filter_mode NOT IN ('blacklist', 'whitelist')"
         )
         await conn.execute(
             "UPDATE chat_personality_settings SET ai_chance = 0.75 WHERE ai_chance = 0.15"
@@ -1951,6 +1981,9 @@ async def update_chat_personality_settings(guild_id: int, **kwargs):
         "text_blocked_channel_ids",
         "gif_blocked_channel_ids",
         "sticker_blocked_channel_ids",
+        "text_channel_filter_mode",
+        "gif_channel_filter_mode",
+        "sticker_channel_filter_mode",
         "language_mode",
         "reply_always",
         "allow_profanity",
@@ -4205,6 +4238,19 @@ async def bulk_upsert_servers(guilds: list):
             """,
             records
         )
+
+
+async def get_tracked_server_ids(guild_ids: list[int]) -> set[int]:
+    """Return guild IDs that already exist in discord_servers."""
+    if not guild_ids:
+        return set()
+
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT guild_id FROM discord_servers WHERE guild_id = ANY($1::BIGINT[])",
+            guild_ids,
+        )
+    return {int(row["guild_id"]) for row in rows}
 
 # ==================== TICKETS ====================
 
