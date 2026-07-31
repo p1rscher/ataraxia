@@ -348,12 +348,12 @@ class ChatPersonalityCog(commands.Cog):
             updates["trait_chaotic"] = int(chaotic)
 
         if not updates:
-            await ctx.send("❌ Bitte mindestens einen Trait angeben.", ephemeral=True)
+            await ctx.send("❌ Please update at least one trait.", ephemeral=True)
             return
 
         await db.get_or_create_chat_personality_settings(ctx.guild.id)
         await db.update_chat_personality_settings(ctx.guild.id, **updates)
-        await ctx.send("✅ Traits wurden aktualisiert.", ephemeral=True)
+        await ctx.send("✅ Traits updated.", ephemeral=True)
 
     @chatpersona_group.command(name="profanity", description="Allow or disallow profanity in generated messages")
     @app_commands.describe(enabled="Whether profanity is allowed")
