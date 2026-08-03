@@ -12,6 +12,16 @@ logger = logging.getLogger(__name__)
 
 EMBED_EMPTY_TEXT = "\u200b"
 
+# Per-embed default colors used when no explicit override is configured.
+# This keeps event defaults expressive while preserving independent custom colors.
+EMBED_KEY_DEFAULT_COLORS = {
+    'voice_join': 0x57F287,
+    'voice_leave': 0xED4245,
+    'voice_switch': 0x5865F2,
+    'traffic_join': 0x57F287,
+    'traffic_leave': 0xED4245,
+}
+
 
 def set_embed_footer(
     embed: discord.Embed,
@@ -74,6 +84,11 @@ async def get_embed_color(
     override = await db.get_embed_color_override(guild_id, embed_key)
     if override is not None:
         return discord.Color(override)
+
+    key_default = EMBED_KEY_DEFAULT_COLORS.get(embed_key)
+    if key_default is not None:
+        return discord.Color(key_default)
+
     return await get_guild_color(guild_id, fallback_type)
 
 
@@ -109,7 +124,6 @@ def member_template_values(
         "{user.avatar}": member.display_avatar.url,
         "{server}": member.guild.name,
         "{server.icon}": member.guild.icon.url if member.guild.icon else "",
-        "{server.avatar}": member.guild.icon.url if member.guild.icon else "",
         "{member_count}": str(count),
         "{member_count_ext}": ordinal(count),
         "{time}": f"<t:{int(event_time.timestamp())}:F>",
