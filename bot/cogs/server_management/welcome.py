@@ -247,6 +247,14 @@ class WelcomeDashboardView(discord.ui.View):
             self.btn_color.label = "Set Welcome Color"
             self.btn_color.disabled = False
 
+    def _embed_enabled(self) -> bool:
+        return bool(self.settings.get('embed_enabled', True)) if self.settings else True
+
+    def _update_embed_toggle_button(self):
+        enabled = self._embed_enabled()
+        self.btn_toggle_embed.label = "✅ Embed Enabled" if enabled else "⛔ Embed Disabled"
+        self.btn_toggle_embed.style = discord.ButtonStyle.success if enabled else discord.ButtonStyle.secondary
+
     def traffic_label(self) -> str:
         return {
             'join': 'Member Join',
@@ -332,6 +340,7 @@ class WelcomeDashboardView(discord.ui.View):
             self.settings = {
                 'channel_id': None,
                 'message': record.get('content'),
+                'embed_enabled': bool(embed_data.get('enabled', True)),
                 'embed_title': embed_data.get('title'),
                 'embed_description': embed_data.get('description'),
                 'embed_thumbnail': (embed_data.get('thumbnail') or {}).get('url'),
@@ -347,6 +356,7 @@ class WelcomeDashboardView(discord.ui.View):
             }
             if not embed_data:
                 self.settings.update({
+                    'embed_enabled': True,
                     'embed_title': 'Triggered Embed',
                     'embed_description': 'Customize this triggered message.',
                     'embed_color': 0x5865F2,
@@ -358,6 +368,7 @@ class WelcomeDashboardView(discord.ui.View):
             self.settings = {
                 'channel_id': await db.get_level_log_channel_id(guild_id),
                 'message': config.get('message'),
+                'embed_enabled': bool(config.get('embed_enabled', True)),
                 'embed_title': config.get('title'),
                 'embed_description': config.get('description'),
                 'embed_thumbnail': config.get('thumbnail'),
@@ -372,6 +383,7 @@ class WelcomeDashboardView(discord.ui.View):
 
             if not config:
                 self.settings.update({
+                    'embed_enabled': True,
                     'embed_title': '🎉 Level Up!',
                     'embed_description': '{user} has reached **Level {level}**!',
                     'embed_thumbnail': '{user.avatar}',
@@ -388,6 +400,7 @@ class WelcomeDashboardView(discord.ui.View):
             self.settings = {
                 'channel_id': None,
                 'message': config.get('content'),
+                'embed_enabled': bool(config.get('embed_enabled', True)),
                 'embed_title': config.get('title'),
                 'embed_description': config.get('description'),
                 'embed_thumbnail': config.get('thumbnail'),
@@ -402,6 +415,7 @@ class WelcomeDashboardView(discord.ui.View):
 
             if not config:
                 self.settings.update({
+                    'embed_enabled': True,
                     'embed_title': 'Ticket #{ticket_id}',
                     'embed_description': 'Welcome {user}!\n\nPlease describe your issue and our support team will be with you shortly.',
                     'embed_timestamp': False,
@@ -410,6 +424,7 @@ class WelcomeDashboardView(discord.ui.View):
 
         if not self.traffic_event:
             self.settings = await db.get_or_create_welcome_message(guild_id)
+            self.settings['embed_enabled'] = bool(self.settings.get('embed_enabled', True))
             self.settings['embed_fields'] = normalize_embed_fields(self.settings.get('embed_fields'))
             return
 
@@ -421,6 +436,7 @@ class WelcomeDashboardView(discord.ui.View):
         self.settings = {
             'channel_id': channel_id,
             'message': config.get('content'),
+            'embed_enabled': bool(config.get('embed_enabled', True)),
             'embed_title': config.get('title'),
             'embed_description': config.get('description'),
             'embed_thumbnail': config.get('thumbnail'),
@@ -439,6 +455,7 @@ class WelcomeDashboardView(discord.ui.View):
                 self.settings['embed_title'] = '{user.name} left the server'
             else:
                 self.settings['embed_title'] = '{user.name} boosted the server'
+            self.settings['embed_enabled'] = True
             self.settings['embed_thumbnail'] = '{user.avatar}'
             self.settings['embed_footer_text'] = '{server} • {member_count} members'
             self.settings['embed_footer_icon'] = '{server.icon}'
@@ -459,6 +476,7 @@ class WelcomeDashboardView(discord.ui.View):
         if self.trigger_word:
             self.settings.update(values)
             embed_data = dict(self.settings.get('_embed_data') or {})
+            embed_data['enabled'] = bool(self.settings.get('embed_enabled', True))
             embed_data['title'] = self.settings.get('embed_title') or None
             embed_data['description'] = self.settings.get('embed_description') or None
             embed_data['fields'] = self.settings.get('embed_fields', [])
@@ -510,6 +528,7 @@ class WelcomeDashboardView(discord.ui.View):
                 'embed_footer_icon': 'footer_icon',
                 'embed_fields': 'fields',
                 'embed_timestamp': 'timestamp_enabled',
+                'embed_enabled': 'embed_enabled',
             }
             level_values = {
                 mapping[key]: value
@@ -533,6 +552,7 @@ class WelcomeDashboardView(discord.ui.View):
                 'embed_footer_icon': 'footer_icon',
                 'embed_fields': 'fields',
                 'embed_timestamp': 'timestamp_enabled',
+                'embed_enabled': 'embed_enabled',
             }
             open_values = {
                 mapping[key]: value
@@ -549,6 +569,7 @@ class WelcomeDashboardView(discord.ui.View):
 
         mapping = {
             'message': 'content',
+            'embed_enabled': 'embed_enabled',
             'embed_title': 'title',
             'embed_description': 'description',
             'embed_thumbnail': 'thumbnail',
@@ -625,9 +646,10 @@ class WelcomeDashboardView(discord.ui.View):
             return process_member_text(txt, member, event_time=preview_time, time_value="", extra_values=extra_values)
 
         content = process_text(welcome.get('message'))
+        embed_enabled = bool(welcome.get('embed_enabled', True))
         
         embed = None
-        if any(welcome.get(k) for k in ['embed_title', 'embed_description', 'embed_image', 'embed_thumbnail', 'embed_author_name', 'embed_footer_text', 'embed_footer_icon', 'embed_fields']):
+        if embed_enabled and any(welcome.get(k) for k in ['embed_title', 'embed_description', 'embed_image', 'embed_thumbnail', 'embed_author_name', 'embed_footer_text', 'embed_footer_icon', 'embed_fields']):
             embed_values = [
                 welcome.get('embed_title'),
                 welcome.get('embed_description'),
@@ -684,6 +706,7 @@ class WelcomeDashboardView(discord.ui.View):
         return content, embed
 
     async def _build_editor_embed(self) -> discord.Embed:
+        self._update_embed_toggle_button()
         if self.trigger_word:
             dashboard_title = f"📝 Trigger Embed Dashboard"
             dashboard_description = f"Customize the message and embed sent when {self.trigger_word} is used."
@@ -737,6 +760,7 @@ class WelcomeDashboardView(discord.ui.View):
                 else:
                     color_info += "\nMode: Custom override"
         emb.add_field(name="Current Embed Color", value=color_info, inline=False)
+        emb.add_field(name="Embed State", value=("Enabled" if self._embed_enabled() else "Disabled (content-only mode)"), inline=False)
         
         vars_info = (
             "`{user}` - Mention the user\n"
@@ -768,6 +792,7 @@ class WelcomeDashboardView(discord.ui.View):
 
     async def refresh(self, interaction: commands.Context):
         await self.fetch_state()
+        self._update_embed_toggle_button()
         try:
             await interaction.response.edit_message(embed=await self._build_editor_embed(), view=self)
         except discord.InteractionResponded:
@@ -823,6 +848,14 @@ class WelcomeDashboardView(discord.ui.View):
     async def btn_color(self, interaction: commands.Context, btn: discord.ui.Button):
         current_color = await self.current_embed_color_value()
         await interaction.response.send_modal(TriggerColorModal(self, current_color=current_color))
+
+    @discord.ui.button(label="✅ Embed Enabled", style=discord.ButtonStyle.success, row=2)
+    async def btn_toggle_embed(self, interaction: commands.Context, btn: discord.ui.Button):
+        enabled = not self._embed_enabled()
+        await self.update_settings(embed_enabled=enabled)
+        self.settings['embed_enabled'] = enabled
+        self._update_embed_toggle_button()
+        await self.refresh(interaction)
 
     @discord.ui.button(label="Clear Entire Message", style=discord.ButtonStyle.danger, row=2)
     async def btn_clear(self, interaction: commands.Context, btn: discord.ui.Button):

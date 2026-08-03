@@ -394,11 +394,11 @@ Calculate a math expression.
 
 ## ⚙️ Configuration
 
-### Reaction-Role-Panel-Farben
+### Reaction Role Panel Colors
 
-Jedes Reaction-Role-Panel besitzt eine eigene Embed-Farbe. Beim Erstellen oder Bearbeiten eines Panels kann sie im Dialog **Adjust Text/Image** über `Embed Color (Hex)` gesetzt werden, zum Beispiel `#FF00AA`.
+Each reaction-role panel has its own embed color. When creating or editing a panel, set it in the **Adjust Text/Image** dialog using `Embed Color (Hex)`, for example `#FF00AA`.
 
-Die Farbe wird nur für dieses Panel gespeichert und beeinflusst weder Welcome- noch andere Embeds.
+This color is stored only for that panel and does not affect welcome embeds or any other embed type.
 
 ### `/settings color` - Individual Embed Colors
 
@@ -419,15 +419,15 @@ View legacy fallback colors and individual embed overrides.
 **`/settings color reset`** 🟠
 Reset all fallback and individual embed colors.
 
-### Welcome-Embed-Platzhalter
+### Welcome Embed Placeholders
 
-In `/welcome dashboard` können `{time}`, `{member_count}` und `{member_count_ext}` in den Text, Titel, die Beschreibung sowie in Autor- und Footer-Felder eingesetzt werden:
+In `/welcome dashboard`, you can use `{time}`, `{member_count}`, and `{member_count_ext}` in text, title, description, and author/footer fields:
 
-- `{time}` - Discord-Zeitstempel des Versandzeitpunkts. In Titel, Beschreibung und normalen Feldern wird der vollständige Discord-Zeitstempeltext eingesetzt. Im Embed-Footer wird dafür das echte Embed-Timestamp-Feld verwendet, damit Discord es wie `gestern um 08:54 Uhr` rendert; ohne diesen Platzhalter wird kein Zeitstempel gesetzt.
-- `{member_count}` - Anzahl der menschlichen Mitglieder ohne Bots, zum Beispiel `31`.
-- `{member_count_ext}` - Anzahl der menschlichen Mitglieder mit englischer Ordinal-Endung, zum Beispiel `31st`, `22nd`, `13th` oder `4th`.
+- `{time}` - Discord timestamp of the send time. In title, description, and normal fields, full timestamp text is inserted. In the embed footer, the real embed timestamp field is used so Discord renders it naturally (for example as localized relative/full time). Without this placeholder, no timestamp is set.
+- `{member_count}` - Number of human members (excluding bots), for example `31`.
+- `{member_count_ext}` - Number of human members with English ordinal suffix, for example `31st`, `22nd`, `13th`, or `4th`.
 
-Die bestehenden Platzhalter `{user}`, `{user.name}`, `{user.avatar}`, `{server}` und `{server.icon}` bleiben verfügbar.
+The existing placeholders `{user}`, `{user.name}`, `{user.avatar}`, `{server}`, and `{server.icon}` remain available.
 
 ### `/log` - Traffic Log Channels
 
@@ -439,22 +439,24 @@ The shared `User Traffic Logs` channel is optional. Dedicated channels can be co
 
 Use `/log clear` to let an event fall back to the shared traffic channel, or `/log disable` to disable only that event. `/log status` shows all four settings.
 
-### `/log embed` - Traffic-Embeds visuell anpassen
+### `/log embed` - Customize Traffic Embeds Visually
 
-Mit `/log embed` öffnet ein Administrator für **Member Join**, **Member Leave** oder **Server Boost** denselben visuellen Embed-Creator wie `/welcome dashboard`. Die Vorschau wird direkt aktualisiert, während die Buttons und Modals verwendet werden.
+With `/log embed`, an administrator can open the same visual embed builder as `/welcome dashboard` for **Member Join**, **Member Leave**, or **Server Boost**. The preview updates live while you use buttons and modals.
 
-- Titel
-- Beschreibung
-- Autor und Autor-Icon
-- Footer und Footer-Icon
+All dashboard editors using this builder (Welcome, Traffic, Trigger, Level-Up, Ticket Open) include the **Embed Enabled / Embed Disabled** toggle. If set to *disabled*, only outside text is sent (content-only mode).
+
+- Title
+- Description
+- Author and author icon
+- Footer and footer icon
 - Thumbnail
-- großes Bild
-- dieselben Text-Platzhalter wie im Welcome-Dashboard
-- `{time}` über die bestehende Timestamp-Logik
+- Large image
+- The same text placeholders as the welcome dashboard
+- `{time}` through existing timestamp logic
 
-Verfügbare Platzhalter umfassen `{user}`, `{user.name}`, `{user.avatar}`, `{server}`, `{server.icon}`, `{member_count}`, `{member_count_ext}`, `{time}`, `{account_created}`, `{joined_at}` und `{event}`.
+Available placeholders include `{user}`, `{user.name}`, `{user.avatar}`, `{server}`, `{server.icon}`, `{member_count}`, `{member_count_ext}`, `{time}`, `{account_created}`, `{joined_at}`, and `{event}`.
 
-Mit `/log embed-reset` kann ein einzelnes Traffic-Embed auf die Standardkonfiguration zurückgesetzt werden. Die Farbe wird separat über `/settings color set` konfiguriert, damit die Traffic-Farbe nicht versehentlich die Welcome-Farbe übernimmt.
+With `/log embed-reset`, a single traffic embed can be reset to its default configuration. Color is configured separately via `/settings color set`, so traffic colors do not accidentally overwrite welcome colors.
 
 ### `/log-config` - Logging Configuration
 
@@ -518,49 +520,49 @@ View admin statistics (command usage, top users, etc.).
 
 ## 🔧 Utility
 
-### `/triggerembed` - Trigger-Embeds
+### `/triggerembed` - Trigger Embeds
 
-Administratoren können frei konfigurierbare Nachrichten mit Text **außerhalb des Embeds** und einem optionalen Embed erstellen. Beim Schreiben eines exakten Trigger-Wortes wird beides automatisch im aktuellen Kanal gesendet.
+Administrators can create fully configurable messages with text **outside the embed** and an optional embed. When an exact trigger word is typed, both parts are sent automatically in the current channel.
 
-- `/triggerembed create trigger:.partnership` - öffnet den visuellen Embed-Builder
-- `/triggerembed edit trigger:.partnership` - bearbeitet das bestehende Embed
-- `/triggerembed list` - listet alle Trigger-Embeds auf
-- `/triggerembed delete trigger:.partnership` - entfernt ein Trigger-Embed
+- `/triggerembed create trigger:.partnership` - opens the visual embed builder
+- `/triggerembed edit trigger:.partnership` - edits an existing trigger embed
+- `/triggerembed list` - lists all trigger embeds
+- `/triggerembed delete trigger:.partnership` - removes one trigger embed
 
-Der Editor verwendet exakt das Dashboard- und Vorschau-Prinzip von `/welcome dashboard` und den Traffic-Embeds. Der Button **Edit Trigger Text** konfiguriert sowohl den Text außerhalb des Embeds als auch Titel und Beschreibung des Embeds. Zusätzlich können Autor, Footer, Bilder, Felder und Zeitstempel angepasst werden.
+The editor uses the same dashboard and preview concept as `/welcome dashboard` and traffic embeds. The **Edit Trigger Text** button configures both outside text and embed title/description. You can also customize author, footer, images, fields, and timestamp.
 
-Alle Embed-Editoren verwenden denselben Feld-Editor. Über **Edit Fields** können mehrere Felder hinzugefügt, ausgewählt bearbeitet, entfernt oder vollständig geleert werden. Ein Footer-Icon kann außerdem ohne Footer-Text gespeichert werden.
+All embed editors use the same field editor. With **Edit Fields**, you can add multiple fields, edit selected fields, remove selected fields, or clear all fields. A footer icon can also be saved without footer text.
 
-Das Trigger-Wort muss als eigenes whitespace-getrenntes Token vorkommen. Dadurch löst `.partnership` nicht versehentlich bei `.partnerships` aus.
+The trigger word must appear as its own whitespace-delimited token. This prevents `.partnership` from triggering accidentally on `.partnerships`.
 
-### `/chatpersona` - Zufällige Chat-Persönlichkeit
+### `/chatpersona` - Random Chat Personality
 
-Der Bot kann auf Basis echter Nutzer-Nachrichten eine eigene Chat-Persönlichkeit lernen (Wörter, Emojis, GIF-Links, Sticker-Namen) und zufällig im Chat antworten.
+The bot can learn a chat personality from real user messages (words, emojis, GIF links, sticker names) and reply randomly in chat.
 
-- Nachrichten kommen **nicht zeitgesteuert**, sondern bei neuen User-Nachrichten mit konfigurierbarer Zufallschance.
-- Wenn jemand auf eine Bot-Nachricht antwortet, kann über `replymode` eine Antwort mit 100% Wahrscheinlichkeit erzwungen werden.
-- Optional kann eine **stark limitierte AI-Veredelung** genutzt werden (mit täglichem Limit und eigener Chance), damit die meisten Antworten natürlich wirken, aber nicht zu "KI-mäßig".
+- Messages are **not time-based**. They trigger on new user messages with a configurable random chance.
+- If someone replies to a bot message, `replymode` can force a response with 100% probability.
+- Optionally, a **strictly limited AI refinement** can be enabled (daily limit + separate chance), so most responses stay natural and not overly "AI-like".
 
-**Admin-Kommandos:**
-- `/chatpersona status` - aktuelle Einstellungen + gelernte Top-Wörter/Emojis anzeigen
-- `/chatpersona enable enabled:true|false` - Feature aktivieren/deaktivieren
-- `/chatpersona chance percent:1-100` - Zufallschance für Textantworten einstellen
-- `/chatpersona gifchance percent:0-100` - Zufallschance für GIF-Links einstellen
-- `/chatpersona stickerchance percent:0-100` - Zufallschance für Sticker einstellen
-- `/chatpersona cooldown seconds:0-3600` - Mindestabstand zwischen spontanen Bot-Nachrichten
-- `/chatpersona stickercooldown seconds:0-7200` - Mindestabstand zwischen Sticker-Nachrichten pro Channel
-- `/chatpersona blacklist mode target:text|gif|sticker|all mode:blacklist|whitelist` - Modus wählen: blacklist = gelistete Channels blockieren, whitelist = nur gelistete Channels erlauben
-- `/chatpersona blacklist add channel:#chat target:text|gif|sticker|all` - Channel zur jeweiligen Liste hinzufügen
-- `/chatpersona blacklist remove channel:#chat target:text|gif|sticker|all` - Channel aus der jeweiligen Liste entfernen
-- `/chatpersona blacklist list` - aktuelle Modi und Channel-Listen für Text, GIF und Sticker anzeigen
-- `/chatpersona blacklist clear target:text|gif|sticker|all` - Channel-Liste für einen oder alle Typen leeren
-- `/chatpersona language mode:auto|default_en` - Sprachmodus: automatisch erkennen oder Englisch erzwingen
-- `/chatpersona traits nice:0-100 romantic:0-100 funny:0-100 chaotic:0-100` - Persönlichkeit steuern
-- `/chatpersona profanity enabled:true|false` - schlimme Wörter erlauben/verbieten
-- `/chatpersona ai enabled:true|false chance_percent:1-100 daily_limit:1-500` - begrenzte AI konfigurieren
-- `/chatpersona replymode enabled:true|false` - 100%-Antwort bei Replies auf Bot-Nachrichten
-- `/chatpersona resetlearning confirm:RESET` - gelernte Daten zurücksetzen
-- `/chatpersona test` - Vorschau einer generierten Nachricht
+**Admin commands:**
+- `/chatpersona status` - show current settings and learned top words/emojis
+- `/chatpersona enable enabled:true|false` - enable/disable the feature
+- `/chatpersona chance percent:1-100` - set random chance for text replies
+- `/chatpersona gifchance percent:0-100` - set random chance for GIF links
+- `/chatpersona stickerchance percent:0-100` - set random chance for stickers
+- `/chatpersona cooldown seconds:0-3600` - minimum delay between spontaneous bot messages
+- `/chatpersona stickercooldown seconds:0-7200` - minimum delay between sticker messages per channel
+- `/chatpersona blacklist mode target:text|gif|sticker|all mode:blacklist|whitelist` - choose mode: blacklist = block listed channels, whitelist = allow only listed channels
+- `/chatpersona blacklist add channel:#chat target:text|gif|sticker|all` - add channel to the selected list
+- `/chatpersona blacklist remove channel:#chat target:text|gif|sticker|all` - remove channel from the selected list
+- `/chatpersona blacklist list` - show current modes and channel lists for text, GIF, and sticker outputs
+- `/chatpersona blacklist clear target:text|gif|sticker|all` - clear channel list for one or all targets
+- `/chatpersona language mode:auto|default_en` - language mode: auto-detect or force English default
+- `/chatpersona traits nice:0-100 romantic:0-100 funny:0-100 chaotic:0-100` - tune personality traits
+- `/chatpersona profanity enabled:true|false` - allow/disallow strong language
+- `/chatpersona ai enabled:true|false chance_percent:1-100 daily_limit:1-500` - configure limited AI refinement
+- `/chatpersona replymode enabled:true|false` - force 100% replies when users reply to bot messages
+- `/chatpersona resetlearning confirm:RESET` - reset learned data
+- `/chatpersona test` - preview a generated message
 
 ### `/steal` - Copy a Custom Emoji or Sticker
 

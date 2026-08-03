@@ -50,7 +50,7 @@ async def build_ticket_open_payload(
     ticket_channel: discord.TextChannel,
     ticket_id: int,
     support_role: Optional[discord.Role],
-) -> tuple[Optional[str], discord.Embed]:
+) -> tuple[Optional[str], Optional[discord.Embed]]:
     config = await db.get_ticket_open_message_config(guild.id) or {}
     event_time = discord.utils.utcnow()
     extra_values = {
@@ -74,6 +74,7 @@ async def build_ticket_open_payload(
     default_title = "Ticket #{ticket_id}"
     default_description = "Welcome {user}!\n\nPlease describe your issue and our support team will be with you shortly."
     raw_fields = normalize_embed_fields(config.get("fields"))
+    embed_enabled = bool(config.get("embed_enabled", True))
 
     title = config.get("title") if config else default_title
     description = config.get("description") if config else default_description
@@ -88,40 +89,42 @@ async def build_ticket_open_payload(
         config.get("footer_icon"),
     ]
 
-    embed = discord.Embed(
-        title=render(title),
-        description=render(description),
-        color=await get_embed_color(guild.id, "ticket_open_message", "color_ticket"),
-        timestamp=(
-            event_time
-            if bool(config.get("timestamp_enabled", False)) or has_time_placeholder(*embed_values)
-            else None
-        ),
-    )
-
-    if config.get("author_name"):
-        embed.set_author(
-            name=render(config.get("author_name")) or " ",
-            icon_url=render(config.get("author_icon")),
+    embed = None
+    if embed_enabled:
+        embed = discord.Embed(
+            title=render(title),
+            description=render(description),
+            color=await get_embed_color(guild.id, "ticket_open_message", "color_ticket"),
+            timestamp=(
+                event_time
+                if bool(config.get("timestamp_enabled", False)) or has_time_placeholder(*embed_values)
+                else None
+            ),
         )
-    if config.get("thumbnail"):
-        embed.set_thumbnail(url=render(config.get("thumbnail")))
-    if config.get("image"):
-        embed.set_image(url=render(config.get("image")))
-    set_embed_footer(
-        embed,
-        text=render(config.get("footer_text"), footer=True),
-        icon_url=render(config.get("footer_icon")),
-    )
 
-    for field in raw_fields[:25]:
-        if not isinstance(field, dict) or not field.get("name"):
-            continue
-        embed.add_field(
-            name=render(field.get("name")) or "Field",
-            value=(render(field.get("value")) or "-")[:1024],
-            inline=bool(field.get("inline", False)),
+        if config.get("author_name"):
+            embed.set_author(
+                name=render(config.get("author_name")) or " ",
+                icon_url=render(config.get("author_icon")),
+            )
+        if config.get("thumbnail"):
+            embed.set_thumbnail(url=render(config.get("thumbnail")))
+        if config.get("image"):
+            embed.set_image(url=render(config.get("image")))
+        set_embed_footer(
+            embed,
+            text=render(config.get("footer_text"), footer=True),
+            icon_url=render(config.get("footer_icon")),
         )
+
+        for field in raw_fields[:25]:
+            if not isinstance(field, dict) or not field.get("name"):
+                continue
+            embed.add_field(
+                name=render(field.get("name")) or "Field",
+                value=(render(field.get("value")) or "-")[:1024],
+                inline=bool(field.get("inline", False)),
+            )
 
     content = render(config.get("content")) if config else None
     return content, embed

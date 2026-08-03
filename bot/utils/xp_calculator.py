@@ -131,6 +131,7 @@ async def check_level_up(user_id: int, guild_id: int, bot: discord.Client, fallb
                         ) or None
 
                     fields = normalize_embed_fields(config.get('fields'))
+                    embed_enabled = bool(config.get('embed_enabled', True))
                     embed_values = [
                         config.get('title'),
                         config.get('description'),
@@ -142,7 +143,7 @@ async def check_level_up(user_id: int, guild_id: int, bot: discord.Client, fallb
                         config.get('footer_icon'),
                     ]
                     timestamp_enabled = bool(config.get('timestamp_enabled', False))
-                    should_build_embed = any([
+                    should_build_embed = embed_enabled and any([
                         config.get('title'),
                         config.get('description'),
                         config.get('author_name'),
@@ -188,12 +189,14 @@ async def check_level_up(user_id: int, guild_id: int, bot: discord.Client, fallb
 
                     content = render(config.get('message'))
                     if embed is None and not content:
-                        embed = discord.Embed(
-                            title="🎉 Level Up!",
-                            description=f"{member.mention} has reached **Level {current_level}**!",
-                            color=await get_embed_color(guild_id, 'level_up_notification', 'color_level_up')
-                        )
-                    await notification_channel.send(content=content, embed=embed)
+                        if embed_enabled:
+                            embed = discord.Embed(
+                                title="🎉 Level Up!",
+                                description=f"{member.mention} has reached **Level {current_level}**!",
+                                color=await get_embed_color(guild_id, 'level_up_notification', 'color_level_up')
+                            )
+                    if embed is not None or content:
+                        await notification_channel.send(content=content, embed=embed)
             except Exception as e:
                 logger.error(f"Failed to send level up notification: {e}", exc_info=True)
     

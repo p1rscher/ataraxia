@@ -65,9 +65,10 @@ async def on_member_join(member: discord.Member):
                     time_value="",
                 )
                 content = process_text(welcome.get('message'))
+                embed_enabled = bool(welcome.get('embed_enabled', True))
                 
                 embed = None
-                if any(welcome.get(k) for k in [
+                if embed_enabled and any(welcome.get(k) for k in [
                     'embed_title', 'embed_description', 'embed_image',
                     'embed_thumbnail', 'embed_author_name', 'embed_footer_text',
                     'embed_footer_icon', 'embed_fields',

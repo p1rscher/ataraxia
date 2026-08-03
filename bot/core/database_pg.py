@@ -295,6 +295,7 @@ async def init_db():
                 guild_id BIGINT PRIMARY KEY,
                 channel_id BIGINT,
                 message TEXT,
+                embed_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 embed_title TEXT,
                 embed_description TEXT,
                 embed_thumbnail TEXT,
@@ -452,6 +453,13 @@ async def init_db():
         await conn.execute(
             "ALTER TABLE welcome_message "
             "ADD COLUMN IF NOT EXISTS embed_fields JSONB NOT NULL DEFAULT '[]'::jsonb"
+        )
+        await conn.execute(
+            "ALTER TABLE welcome_message "
+            "ADD COLUMN IF NOT EXISTS embed_enabled BOOLEAN NOT NULL DEFAULT TRUE"
+        )
+        await conn.execute(
+            "UPDATE welcome_message SET embed_enabled = TRUE WHERE embed_enabled IS NULL"
         )
         
         # Temp Voice Settings
@@ -736,6 +744,7 @@ async def init_db():
                 guild_id BIGINT NOT NULL,
                 event_key TEXT NOT NULL,
                 content TEXT,
+                embed_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 title TEXT,
                 description TEXT,
                 author_name TEXT,
@@ -753,11 +762,19 @@ async def init_db():
             "ALTER TABLE traffic_embed_configs "
             "ADD COLUMN IF NOT EXISTS content TEXT"
         )
+        await conn.execute(
+            "ALTER TABLE traffic_embed_configs "
+            "ADD COLUMN IF NOT EXISTS embed_enabled BOOLEAN NOT NULL DEFAULT TRUE"
+        )
+        await conn.execute(
+            "UPDATE traffic_embed_configs SET embed_enabled = TRUE WHERE embed_enabled IS NULL"
+        )
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS level_up_embed_configs (
                 guild_id BIGINT PRIMARY KEY,
                 message TEXT,
+                embed_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 title TEXT,
                 description TEXT,
                 author_name TEXT,
@@ -770,11 +787,19 @@ async def init_db():
                 timestamp_enabled BOOLEAN NOT NULL DEFAULT FALSE
             )
         """)
+        await conn.execute(
+            "ALTER TABLE level_up_embed_configs "
+            "ADD COLUMN IF NOT EXISTS embed_enabled BOOLEAN NOT NULL DEFAULT TRUE"
+        )
+        await conn.execute(
+            "UPDATE level_up_embed_configs SET embed_enabled = TRUE WHERE embed_enabled IS NULL"
+        )
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS ticket_open_message_configs (
                 guild_id BIGINT PRIMARY KEY,
                 content TEXT,
+                embed_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 title TEXT,
                 description TEXT,
                 author_name TEXT,
@@ -787,6 +812,13 @@ async def init_db():
                 timestamp_enabled BOOLEAN NOT NULL DEFAULT FALSE
             )
         """)
+        await conn.execute(
+            "ALTER TABLE ticket_open_message_configs "
+            "ADD COLUMN IF NOT EXISTS embed_enabled BOOLEAN NOT NULL DEFAULT TRUE"
+        )
+        await conn.execute(
+            "UPDATE ticket_open_message_configs SET embed_enabled = TRUE WHERE embed_enabled IS NULL"
+        )
 
         # Add color_verification column if it doesn't exist
         try:
@@ -3392,7 +3424,7 @@ async def set_traffic_embed_config(guild_id: int, event: str, **values):
     allowed = {
         'content', 'title', 'description', 'author_name', 'author_icon',
         'footer_text', 'footer_icon', 'thumbnail', 'image',
-        'fields', 'timestamp_enabled',
+        'fields', 'timestamp_enabled', 'embed_enabled',
     }
     values = {key: value for key, value in values.items() if key in allowed}
     if not values:
@@ -3444,7 +3476,7 @@ async def set_level_up_embed_config(guild_id: int, **values):
     allowed = {
         'message', 'title', 'description', 'author_name', 'author_icon',
         'footer_text', 'footer_icon', 'thumbnail', 'image',
-        'fields', 'timestamp_enabled',
+        'fields', 'timestamp_enabled', 'embed_enabled',
     }
     values = {key: value for key, value in values.items() if key in allowed}
     if not values:
@@ -3493,7 +3525,7 @@ async def set_ticket_open_message_config(guild_id: int, **values):
     allowed = {
         'content', 'title', 'description', 'author_name', 'author_icon',
         'footer_text', 'footer_icon', 'thumbnail', 'image',
-        'fields', 'timestamp_enabled',
+        'fields', 'timestamp_enabled', 'embed_enabled',
     }
     values = {key: value for key, value in values.items() if key in allowed}
     if not values:

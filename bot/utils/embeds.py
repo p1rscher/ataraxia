@@ -210,6 +210,7 @@ async def send_member_traffic_embed(
 
     default_config = {
         'content': None,
+        'embed_enabled': True,
         'title': default_title,
         'description': None,
         'author_name': None,
@@ -222,6 +223,7 @@ async def send_member_traffic_embed(
         'timestamp_enabled': True,
     }
     default_config.update(config)
+    embed_enabled = bool(default_config.get('embed_enabled', True))
     raw_fields = default_config.get('fields') or default_fields
     if isinstance(raw_fields, str):
         try:
@@ -257,40 +259,45 @@ async def send_member_traffic_embed(
         extra_values=extra_values,
     ) or None
 
-    embed = discord.Embed(
-        title=render(default_config.get('title')),
-        description=render(default_config.get('description')),
-        color=await get_embed_color(member.guild.id, f'traffic_{event}'),
-        timestamp=(
-            now
-            if default_config.get('timestamp_enabled', True) or '{time}' in (footer_text or '')
-            else None
-        ),
-    )
-    if default_config.get('author_name'):
-        embed.set_author(
-            name=render(default_config['author_name']) or " ",
-            icon_url=render(default_config.get('author_icon')),
+    embed = None
+    if embed_enabled:
+        embed = discord.Embed(
+            title=render(default_config.get('title')),
+            description=render(default_config.get('description')),
+            color=await get_embed_color(member.guild.id, f'traffic_{event}'),
+            timestamp=(
+                now
+                if default_config.get('timestamp_enabled', True) or '{time}' in (footer_text or '')
+                else None
+            ),
         )
-    if default_config.get('thumbnail'):
-        embed.set_thumbnail(url=render(default_config['thumbnail']))
-    if default_config.get('image'):
-        embed.set_image(url=render(default_config['image']))
-    set_embed_footer(
-        embed,
-        text=render_footer(default_config.get('footer_text')),
-        icon_url=render(default_config.get('footer_icon')),
-    )
-    for field in raw_fields[:25]:
-        if not isinstance(field, dict) or not field.get('name'):
-            continue
-        embed.add_field(
-            name=render(field['name']) or "Field",
-            value=(render(field.get('value')) or "-")[:1024],
-            inline=bool(field.get('inline', False)),
+        if default_config.get('author_name'):
+            embed.set_author(
+                name=render(default_config['author_name']) or " ",
+                icon_url=render(default_config.get('author_icon')),
+            )
+        if default_config.get('thumbnail'):
+            embed.set_thumbnail(url=render(default_config['thumbnail']))
+        if default_config.get('image'):
+            embed.set_image(url=render(default_config['image']))
+        set_embed_footer(
+            embed,
+            text=render_footer(default_config.get('footer_text')),
+            icon_url=render(default_config.get('footer_icon')),
         )
+        for field in raw_fields[:25]:
+            if not isinstance(field, dict) or not field.get('name'):
+                continue
+            embed.add_field(
+                name=render(field['name']) or "Field",
+                value=(render(field.get('value')) or "-")[:1024],
+                inline=bool(field.get('inline', False)),
+            )
 
-    await channel.send(content=render(default_config.get('content')), embed=embed)
+    content = render(default_config.get('content'))
+    if not embed and not content:
+        return False
+    await channel.send(content=content, embed=embed)
     return True
 
 

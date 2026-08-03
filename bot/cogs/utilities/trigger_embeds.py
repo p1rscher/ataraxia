@@ -167,7 +167,8 @@ class TriggerEmbedCog(commands.Cog):
                     continue
 
                 embed_data = _json_object(record.get("embed_data"))
-                embed = discord.Embed.from_dict(embed_data)
+                embed_enabled = bool(embed_data.get("enabled", True))
+                embed = discord.Embed.from_dict(embed_data) if embed_enabled else None
                 event_time = discord.utils.utcnow()
                 extra_values = {"trigger": record["trigger_word"], "event": "trigger"}
 
@@ -182,28 +183,29 @@ class TriggerEmbedCog(commands.Cog):
                         extra_values=extra_values,
                     ) or None
 
-                embed.title = render(embed_data.get("title"))
-                embed.description = render(embed_data.get("description"))
-                if embed_data.get("author"):
-                    embed.set_author(
-                        name=render(embed_data["author"].get("name")) or " ",
-                        icon_url=render(embed_data["author"].get("icon_url")),
+                if embed is not None:
+                    embed.title = render(embed_data.get("title"))
+                    embed.description = render(embed_data.get("description"))
+                    if embed_data.get("author"):
+                        embed.set_author(
+                            name=render(embed_data["author"].get("name")) or " ",
+                            icon_url=render(embed_data["author"].get("icon_url")),
+                        )
+                    footer = embed_data.get("footer") or {}
+                    set_embed_footer(
+                        embed,
+                        text=render(footer.get("text"), footer=True),
+                        icon_url=render(footer.get("icon_url")),
                     )
-                footer = embed_data.get("footer") or {}
-                set_embed_footer(
-                    embed,
-                    text=render(footer.get("text"), footer=True),
-                    icon_url=render(footer.get("icon_url")),
-                )
-                embed.clear_fields()
-                for field in normalize_embed_fields(embed_data.get("fields")):
-                    embed.add_field(
-                        name=render(field.get("name")) or "Field",
-                        value=(render(field.get("value")) or "-")[:1024],
-                        inline=bool(field.get("inline", False)),
-                    )
-                if embed_data.get("timestamp"):
-                    embed.timestamp = event_time
+                    embed.clear_fields()
+                    for field in normalize_embed_fields(embed_data.get("fields")):
+                        embed.add_field(
+                            name=render(field.get("name")) or "Field",
+                            value=(render(field.get("value")) or "-")[:1024],
+                            inline=bool(field.get("inline", False)),
+                        )
+                    if embed_data.get("timestamp"):
+                        embed.timestamp = event_time
 
                 content = process_member_text(
                     record.get("content"),
@@ -211,6 +213,8 @@ class TriggerEmbedCog(commands.Cog):
                     event_time=event_time,
                     extra_values=extra_values,
                 ) or None
+                if not embed and not content:
+                    continue
                 await message.channel.send(content=content, embed=embed)
         except discord.Forbidden:
             pass
