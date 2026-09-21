@@ -71,9 +71,22 @@ class ChatPersonalityCog(commands.Cog):
         self._last_sticker_message_at: dict[int, float] = {}
         self._groq_client = None
 
+        # Runtime tuning via env vars
+        self._ai_timeout_seconds = float(os.getenv("CHATPERSONA_AI_TIMEOUT_SECONDS", "12.0"))
+        self._ai_model = os.getenv("CHATPERSONA_AI_MODEL", "openai/gpt-oss-20b")
+        self._ai_temperature = float(os.getenv("CHATPERSONA_AI_TEMPERATURE", "0.95"))
+        self._ai_max_tokens = int(os.getenv("CHATPERSONA_AI_MAX_TOKENS", "90"))
+        self._trace_enabled = os.getenv("CHATPERSONA_TRACE", "1").strip().lower() in {"1", "true", "yes", "on"}
+
         api_key = os.getenv("GROQ_API_KEY")
         if AsyncGroq is not None and api_key:
             self._groq_client = AsyncGroq(api_key=api_key)
+            logger.info("ChatPersonality: Groq client initialized (model=%s, timeout=%.1fs)", self._ai_model, self._ai_timeout_seconds)
+        else:
+            if AsyncGroq is None:
+                logger.warning("ChatPersonality: groq package not available, AI filler disabled.")
+            elif not api_key:
+                logger.warning("ChatPersonality: GROQ_API_KEY missing, AI filler disabled.")
 
     @commands.hybrid_group(
         name="chatpersona",
@@ -131,6 +144,10 @@ class ChatPersonalityCog(commands.Cog):
             value=f"{settings.get('ai_daily_used', 0)}/{settings.get('ai_daily_limit', 5000)}",
             inline=True,
         )
+
+        embed.add_field(name="AI model", value=self._ai_model, inline=True)
+        embed.add_field(name="AI timeout", value=f"{self._ai_timeout_seconds:.1f}s", inline=True)
+        embed.add_field(name="Trace logs", value="On" if self._trace_enabled else "Off", inline=True)
 
         top_words = ", ".join(row["token_value"] for row in words) or "-"
         top_emojis = " ".join(row["token_value"] for row in emojis) or "-"
@@ -854,6 +871,7 @@ class ChatPersonalityCog(commands.Cog):
             },
             language_mode=language_mode,
         )
+
         ai_text = await self._try_ai_filler(
             guild_id=guild_id,
             seed=ai_seed,
@@ -867,10 +885,15 @@ class ChatPersonalityCog(commands.Cog):
             },
             language_mode=language_mode,
         )
+
         if ai_text:
             msg = ai_text
+            if self._trace_enabled:
+                logger.info("ChatPersonality: guild=%s AI selected", guild_id)
         else:
             msg = ""
+            if self._trace_enabled:
+                logger.info("ChatPersonality: guild=%s fallback generator selected", guild_id)
 
         soft_openers_by_lang = {
             "en": [
@@ -960,6 +983,21 @@ class ChatPersonalityCog(commands.Cog):
         if not msg:
             msg = random.choice(["valid", "same", "I feel that", "okay yeah", "mood"])
 
+        # Optional second-stage refinement (currently enabled and logged)
+        msg = await self._maybe_refine_with_ai(
+            guild_id=guild_id,
+            msg=msg,
+            incoming_text=incoming_text,
+            settings=settings,
+            traits={
+                "nice": nice,
+                "romantic": romantic,
+                "funny": funny,
+                "chaotic": chaotic,
+            },
+            language_mode=language_mode,
+        )
+
         gif_chance = float(settings.get("gif_chance", 0.08) or 0.08)
         if not self._is_channel_filtered(settings, "gif", channel_id):
             if any("gif" in word.casefold() for word in incoming_words) or "tenor.com" in incoming_text.lower() or "giphy.com" in incoming_text.lower():
@@ -1011,18 +1049,36 @@ class ChatPersonalityCog(commands.Cog):
         language_mode: str,
     ) -> Optional[str]:
         if not seed:
+            if self._trace_enabled:
+                logger.info("ChatPersonality AI skip: guild=%s reason=empty_seed", guild_id)
             return None
+
         if self._groq_client is None:
+            if self._trace_enabled:
+                logger.info("ChatPersonality AI skip: guild=%s reason=no_client", guild_id)
             return None
+
         if not settings.get("ai_enabled", True):
+            if self._trace_enabled:
+                logger.info("ChatPersonality AI skip: guild=%s reason=ai_disabled", guild_id)
             return None
 
         chance = float(settings.get("ai_chance", 0.75) or 0.75)
-        if random.random() >= max(0.0, min(1.0, chance)):
+        chance = max(0.0, min(1.0, chance))
+        roll = random.random()
+        if roll >= chance:
+            if self._trace_enabled:
+                logger.info(
+                    "ChatPersonality AI skip: guild=%s reason=chance_miss roll=%.4f chance=%.4f",
+                    guild_id, roll, chance
+                )
             return None
 
+        # Daily quota only consumed if all previous gates passed
         can_use = await db.consume_chat_personality_ai_quota(guild_id)
         if not can_use:
+            if self._trace_enabled:
+                logger.warning("ChatPersonality AI skip: guild=%s reason=quota_exhausted", guild_id)
             return None
 
         system_prompt = (
@@ -1041,25 +1097,48 @@ class ChatPersonalityCog(commands.Cog):
         )
 
         try:
+            started = time.perf_counter()
             completion = await asyncio.wait_for(
                 self._groq_client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model=self._ai_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.95,
-                    max_tokens=90,
+                    temperature=self._ai_temperature,
+                    max_tokens=self._ai_max_tokens,
                     stream=False,
                 ),
-                timeout=6.0,
+                timeout=self._ai_timeout_seconds,
             )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+
             text = (completion.choices[0].message.content or "").strip()
-            if text:
-                return self._finalize_single_message(text)
+            if not text:
+                if self._trace_enabled:
+                    logger.warning(
+                        "ChatPersonality AI result empty: guild=%s model=%s latency_ms=%s",
+                        guild_id, self._ai_model, elapsed_ms
+                    )
+                return None
+
+            finalized = self._finalize_single_message(text)
+            if self._trace_enabled:
+                logger.info(
+                    "ChatPersonality AI success: guild=%s model=%s latency_ms=%s chars=%s preview=%r",
+                    guild_id, self._ai_model, elapsed_ms, len(finalized), finalized[:120]
+                )
+            return finalized
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                "ChatPersonality AI timeout: guild=%s model=%s timeout_s=%.1f",
+                guild_id, self._ai_model, self._ai_timeout_seconds
+            )
+            return None
         except Exception as exc:
-            logger.debug("Chat personality AI filler skipped: %s", exc)
-        return None
+            logger.exception("ChatPersonality AI error: guild=%s model=%s err=%s", guild_id, self._ai_model, exc)
+            return None
 
     async def _maybe_refine_with_ai(
         self,
@@ -1070,6 +1149,63 @@ class ChatPersonalityCog(commands.Cog):
         traits: dict[str, int],
         language_mode: str,
     ) -> str:
+        # Lightweight optional refinement pass. Controlled by same ai_enabled/chance/quota path.
+        # To avoid excessive quota use, keep it conservative.
+        if not msg:
+            return self._finalize_single_message(msg)
+
+        refine_chance = min(1.0, float(settings.get("ai_chance", 0.75) or 0.75) * 0.25)
+        if random.random() >= refine_chance:
+            return self._finalize_single_message(msg)
+
+        if self._groq_client is None or not settings.get("ai_enabled", True):
+            return self._finalize_single_message(msg)
+
+        can_use = await db.consume_chat_personality_ai_quota(guild_id)
+        if not can_use:
+            if self._trace_enabled:
+                logger.info("ChatPersonality AI refine skip: guild=%s reason=quota_exhausted", guild_id)
+            return self._finalize_single_message(msg)
+
+        system_prompt = (
+            "Refine one Discord reply line. Keep meaning and vibe. "
+            "Keep it short, casual, human. Output exactly one line."
+        )
+        user_prompt = (
+            f"Incoming message context: {incoming_text or '-'}\n"
+            f"Current draft: {msg}\n"
+            f"Language mode: {language_mode}\n"
+            f"Traits: {traits}\n"
+            "Return one improved line."
+        )
+
+        try:
+            started = time.perf_counter()
+            completion = await asyncio.wait_for(
+                self._groq_client.chat.completions.create(
+                    model=self._ai_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=min(1.0, self._ai_temperature),
+                    max_tokens=min(90, self._ai_max_tokens),
+                    stream=False,
+                ),
+                timeout=self._ai_timeout_seconds,
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            text = (completion.choices[0].message.content or "").strip()
+            if text:
+                out = self._finalize_single_message(text)
+                if self._trace_enabled:
+                    logger.info("ChatPersonality AI refine success: guild=%s latency_ms=%s", guild_id, elapsed_ms)
+                return out
+        except asyncio.TimeoutError:
+            logger.warning("ChatPersonality AI refine timeout: guild=%s", guild_id)
+        except Exception as exc:
+            logger.exception("ChatPersonality AI refine error: guild=%s err=%s", guild_id, exc)
+
         return self._finalize_single_message(msg)
 
     def _sanitize_profanity(self, text: str) -> str:

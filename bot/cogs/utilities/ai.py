@@ -231,7 +231,7 @@ class AICog(commands.Cog):
             
             # Groq API Call
             completion = await self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="openai/gpt-oss-20b",
                 messages=messages,
                 temperature=0.7,
                 max_tokens=settings['max_tokens'],
@@ -299,7 +299,7 @@ class AICog(commands.Cog):
                 f"Asked by {ctx.author.display_name} • "
                 f"{tier.replace('_', ' ').title()} • "
                 f"{user_usage['count']}/{settings['daily_limit']} today • "
-                f"Llama 3.3 70B"
+                f"openai/gpt-oss-20b"
             )
             embed.set_footer(text=footer_text)
 
