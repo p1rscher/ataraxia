@@ -19,7 +19,10 @@ class AboutCog(commands.Cog):
         
         embed.add_field(
             name="Developer",
-            value="pirscher (Git: p1rscher) & ur.fav.kuma (Git: zKxma)",
+            value=(
+                "pirscher (Git: p1rscher) & ur.fav.kuma (Git: zKxma)\n"
+                "Original concept by ur.fav.kuma (Git: zKxma)"
+            ),
             inline=False
         )
         
@@ -35,7 +38,8 @@ class AboutCog(commands.Cog):
                 "• [discord.py](https://github.com/Rapptz/discord.py) (MIT)\n"
                 "• [asyncpg](https://github.com/MagicStack/asyncpg) (Apache 2.0)\n"
                 "• [python-dotenv](https://github.com/theskumar/python-dotenv) (BSD-3)\n"
-                "• [groq](https://github.com/groq/groq-python) (Apache 2.0)\n"
+                "• [aiohttp](https://github.com/aio-libs/aiohttp) (Apache 2.0)\n"
+                "• [Ollama](https://github.com/ollama/ollama) (MIT)\n"
                 "• [Python](https://www.python.org/) 3.11+ (PSF License)"
             ),
             inline=False
@@ -43,7 +47,7 @@ class AboutCog(commands.Cog):
         
         embed.add_field(
             name="License",
-            value="MIT License © 2025-2026 pirscher (Git: p1rscher)\nSee [full licenses](https://ataraxia-bot.com/licenses)",
+            value="MIT License © 2025-2026 p1rscher & zKxma\nSee [full licenses](https://ataraxia-bot.com/licenses)",
             inline=False
         )
         

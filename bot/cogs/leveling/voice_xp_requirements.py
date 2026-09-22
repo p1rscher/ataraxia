@@ -2,8 +2,8 @@
 
 """
 Ataraxia Discord Bot
-Copyright (c) 2025 p1rscher
-Licensed under the AGPLv3 License - see LICENSE file for details.
+Copyright (c) 2025 p1rscher & zKxma
+Licensed under the MIT License - see LICENSE file for details.
 """
 
 import discord

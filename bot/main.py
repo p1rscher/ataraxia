@@ -2,7 +2,7 @@
 
 """
 Ataraxia Discord Bot
-Copyright (c) 2025 p1rscher
+Copyright (c) 2025-2026 p1rscher & zKxma
 Licensed under the MIT License - see LICENSE file for details.
 """
 

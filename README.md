@@ -8,6 +8,11 @@
 
 A feature-rich Discord bot with a comprehensive XP & leveling system, voice activity tracking, and a modern web dashboard.
 
+## Credits
+
+- **Original concept:** ur.fav.kuma (Git: [zKxma](https://github.com/zKxma))
+- **Development and maintenance:** pirscher (Git: [p1rscher](https://github.com/p1rscher))
+
 ## ✨ Features
 
 ### 🎯 Core Features
