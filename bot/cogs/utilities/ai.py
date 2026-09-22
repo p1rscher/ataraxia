@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ext import commands
 import os
-from groq import AsyncGroq
+from core.ai_client import get_ai_client, AIClientError
 import logging
 from dotenv import load_dotenv
 from collections import defaultdict
@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 class AICog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.client = AsyncGroq(api_key=os.getenv('GROQ_API_KEY'))
+        # Local Ollama backend instead of Groq (see core/ai_client.py)
+        self.client = get_ai_client()
+        self.ai_model = self.client.model
         self.user_cooldowns = defaultdict(lambda: 0)
         
         # Conversation history per user (last 5 messages)
@@ -229,9 +231,9 @@ class AICog(commands.Cog):
             # Add current question
             messages.append({"role": "user", "content": question})
             
-            # Groq API Call
+            # Call the local model through Ollama
             completion = await self.client.chat.completions.create(
-                model="openai/gpt-oss-20b",
+                model=self.ai_model,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=settings['max_tokens'],
@@ -245,9 +247,10 @@ class AICog(commands.Cog):
             
             # ✅ TRACK COSTS (for monitoring)
             self.total_daily_requests += 1
-            # Rough cost estimate if using OpenAI (currently using Groq = free)
+            # Local model = no API costs. The value is retained only as a
+            # reference estimate and can be set via .env.
             tokens_used = completion.usage.total_tokens if hasattr(completion, 'usage') else 250
-            cost_per_token = 0.0000006  # GPT-4o-mini cost (for reference)
+            cost_per_token = float(os.getenv('AI_COST_PER_TOKEN', '0.0'))
             self.daily_cost_estimate += tokens_used * cost_per_token
             
             # ✅ COST ALERT CHECK (every 100 requests)
@@ -299,7 +302,7 @@ class AICog(commands.Cog):
                 f"Asked by {ctx.author.display_name} • "
                 f"{tier.replace('_', ' ').title()} • "
                 f"{user_usage['count']}/{settings['daily_limit']} today • "
-                f"openai/gpt-oss-20b"
+                f"{self.ai_model}"
             )
             embed.set_footer(text=footer_text)
 
@@ -315,6 +318,13 @@ class AICog(commands.Cog):
                 f"daily: {user_usage['count']}/{settings['daily_limit']}): {question[:50]}..."
             )
 
+        except AIClientError as e:
+            logger.error(f"AI backend unreachable for user {user_id}: {e}", exc_info=True)
+            await ctx.send(
+                "❌ The AI backend is currently unreachable.\n"
+                "The self-hosted model might be offline - please try again in a moment!",
+                ephemeral=True
+            )
         except Exception as e:
             logger.error(f"AI Error for user {user_id}: {e}", exc_info=True)
             await ctx.send(
@@ -451,7 +461,7 @@ class AICog(commands.Cog):
                 embed.add_field(name="Max Daily Limit", value=f"${self.max_daily_cost:.2f}")
                 embed.add_field(
                     name="Note",
-                    value="Currently using Groq (free), but this shows what it would cost on OpenAI.",
+                    value="Running on a self-hosted Ollama model (no API costs). This is a reference figure only.",
                     inline=False
                 )
                 

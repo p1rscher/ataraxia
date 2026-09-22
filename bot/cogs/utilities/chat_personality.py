@@ -15,10 +15,12 @@ from discord.ext import commands
 from core import database_pg as db
 from utils.embeds import get_guild_color
 
-try:
-    from groq import AsyncGroq
-except Exception:  # pragma: no cover - optional runtime dependency guard
-    AsyncGroq = None
+from core.ai_client import (
+    AIClientError,
+    get_ai_client,
+    is_configured as ai_is_configured,
+    strip_surrounding_quotes,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,13 @@ URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9_']{3,}", re.UNICODE)
 NON_LATIN_RE = re.compile(r"[\u0400-\u04FF\u0590-\u05FF\u0600-\u06FF\u0900-\u097F\u3040-\u30FF\u3400-\u9FFF]")
 
+# Small models often prepend a filler phrase to their response.
+_PREAMBLE_RE = re.compile(
+    r"^\s*(sure|okay|ok|alright|certainly|of course|here(?:'s| is)[^:]{0,30}"
+    r"|answer|reply|response|assistant)\s*[:,!\-]\s*",
+    re.IGNORECASE,
+)
+
 EN_HINTS = {
     "the", "and", "you", "that", "this", "with", "for", "are", "was", "have", "just", "why",
     "what", "when", "where", "mood", "same", "true", "clean", "point", "crazy", "valid",
@@ -69,24 +78,27 @@ class ChatPersonalityCog(commands.Cog):
         self._last_generated_parts: dict[int, dict[str, str]] = {}
         self._last_spontaneous_message_at: dict[int, float] = {}
         self._last_sticker_message_at: dict[int, float] = {}
-        self._groq_client = None
+        self._ai_client = None
 
         # Runtime tuning via env vars
-        self._ai_timeout_seconds = float(os.getenv("CHATPERSONA_AI_TIMEOUT_SECONDS", "12.0"))
-        self._ai_model = os.getenv("CHATPERSONA_AI_MODEL", "openai/gpt-oss-20b")
+        # Local models take significantly longer than a cloud API -> higher default.
+        self._ai_timeout_seconds = float(os.getenv("CHATPERSONA_AI_TIMEOUT_SECONDS", "45.0"))
+        self._ai_model = os.getenv("CHATPERSONA_AI_MODEL") or os.getenv("OLLAMA_MODEL", "pparikh2/phi3.5Q4_K_M")
         self._ai_temperature = float(os.getenv("CHATPERSONA_AI_TEMPERATURE", "0.95"))
         self._ai_max_tokens = int(os.getenv("CHATPERSONA_AI_MAX_TOKENS", "90"))
         self._trace_enabled = os.getenv("CHATPERSONA_TRACE", "1").strip().lower() in {"1", "true", "yes", "on"}
+        # A second model call to "refine" the result only costs time on local
+        # models and usually does not improve the result. Default: off.
+        self._ai_refine_enabled = os.getenv("CHATPERSONA_AI_REFINE", "0").strip().lower() in {"1", "true", "yes", "on"}
 
-        api_key = os.getenv("GROQ_API_KEY")
-        if AsyncGroq is not None and api_key:
-            self._groq_client = AsyncGroq(api_key=api_key)
-            logger.info("ChatPersonality: Groq client initialized (model=%s, timeout=%.1fs)", self._ai_model, self._ai_timeout_seconds)
+        if ai_is_configured():
+            self._ai_client = get_ai_client()
+            logger.info(
+                "ChatPersonality: Ollama client initialized (model=%s, timeout=%.1fs, refine=%s)",
+                self._ai_model, self._ai_timeout_seconds, self._ai_refine_enabled,
+            )
         else:
-            if AsyncGroq is None:
-                logger.warning("ChatPersonality: groq package not available, AI filler disabled.")
-            elif not api_key:
-                logger.warning("ChatPersonality: GROQ_API_KEY missing, AI filler disabled.")
+            logger.warning("ChatPersonality: OLLAMA_BASE_URL missing, AI filler disabled.")
 
     @commands.hybrid_group(
         name="chatpersona",
@@ -98,7 +110,7 @@ class ChatPersonalityCog(commands.Cog):
 
     async def _require_admin(self, ctx: commands.Context) -> bool:
         if not isinstance(ctx.author, discord.Member) or not ctx.author.guild_permissions.administrator:
-            await ctx.send("❌ Nur Administratoren können diese Funktion konfigurieren.", ephemeral=True)
+            await ctx.send("❌ Only administrators can configure this feature.", ephemeral=True)
             return False
         return True
 
@@ -146,6 +158,11 @@ class ChatPersonalityCog(commands.Cog):
         )
 
         embed.add_field(name="AI model", value=self._ai_model, inline=True)
+        embed.add_field(
+            name="AI backend",
+            value="Ollama (self-hosted)" if self._ai_client is not None else "not configured",
+            inline=True,
+        )
         embed.add_field(name="AI timeout", value=f"{self._ai_timeout_seconds:.1f}s", inline=True)
         embed.add_field(name="Trace logs", value="On" if self._trace_enabled else "Off", inline=True)
 
@@ -419,8 +436,8 @@ class ChatPersonalityCog(commands.Cog):
         await db.update_chat_personality_settings(ctx.guild.id, **updates)
 
         msg = "✅ AI settings updated."
-        if enabled and self._groq_client is None:
-            msg += "\n⚠️ GROQ_API_KEY fehlt oder groq ist nicht verfügbar, daher bleibt AI faktisch inaktiv."
+        if enabled and self._ai_client is None:
+            msg += "\n⚠️ OLLAMA_BASE_URL is missing from .env, so AI is effectively disabled."
         await ctx.send(msg, ephemeral=True)
 
     @chatpersona_group.command(name="resetlearning", description="Delete learned words/emojis/gifs/stickers")
@@ -430,7 +447,7 @@ class ChatPersonalityCog(commands.Cog):
         if not await self._require_admin(ctx):
             return
         if confirm.strip().upper() != "RESET":
-            await ctx.send("❌ Bestätigung fehlt. Nutze confirm=RESET.", ephemeral=True)
+            await ctx.send("❌ Confirmation is missing. Use confirm=RESET.", ephemeral=True)
             return
         await db.reset_chat_personality_learning(ctx.guild.id)
         self._token_cache.pop(ctx.guild.id, None)
@@ -807,7 +824,16 @@ class ChatPersonalityCog(commands.Cog):
         return "en"
 
     def _finalize_single_message(self, text: str) -> str:
-        cleaned = (text or "").replace("|", ",")
+        # Small local models often return "..." or an introductory filler phrase.
+        cleaned = strip_surrounding_quotes(text or "")
+        # Apply repeatedly: "Sure! Here's a reply: ..." contains two filler phrases.
+        for _ in range(3):
+            stripped = _PREAMBLE_RE.sub("", cleaned, count=1)
+            stripped = strip_surrounding_quotes(stripped)
+            if stripped == cleaned:
+                break
+            cleaned = stripped
+        cleaned = cleaned.replace("|", ",")
         cleaned = re.sub(r"\s*\n+\s*", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.-")
         if not cleaned:
@@ -1053,7 +1079,7 @@ class ChatPersonalityCog(commands.Cog):
                 logger.info("ChatPersonality AI skip: guild=%s reason=empty_seed", guild_id)
             return None
 
-        if self._groq_client is None:
+        if self._ai_client is None:
             if self._trace_enabled:
                 logger.info("ChatPersonality AI skip: guild=%s reason=no_client", guild_id)
             return None
@@ -1086,7 +1112,11 @@ class ChatPersonalityCog(commands.Cog):
             "Use the provided seed as raw material, not as a rigid template. "
             "Sound human, slightly messy, not polished, not robotic. "
             "Default to English unless the chat is clearly another language. "
-            "Do not output multiple variants, labels, bullet points, or explanations."
+            "Do not output multiple variants, labels, bullet points, or explanations. "
+            # Small local models need these rules stated very explicitly:
+            "Hard rules: output ONLY the reply text. Maximum 20 words. One single line. "
+            "No quotation marks around it. No prefix like 'Reply:' or 'Assistant:'. "
+            "No notes, no reasoning, no alternatives."
         )
         user_prompt = (
             f"Incoming user message: {incoming_text or '-'}\n"
@@ -1099,7 +1129,7 @@ class ChatPersonalityCog(commands.Cog):
         try:
             started = time.perf_counter()
             completion = await asyncio.wait_for(
-                self._groq_client.chat.completions.create(
+                self._ai_client.chat.completions.create(
                     model=self._ai_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -1136,6 +1166,9 @@ class ChatPersonalityCog(commands.Cog):
                 guild_id, self._ai_model, self._ai_timeout_seconds
             )
             return None
+        except AIClientError as exc:
+            logger.warning("ChatPersonality AI backend error: guild=%s model=%s err=%s", guild_id, self._ai_model, exc)
+            return None
         except Exception as exc:
             logger.exception("ChatPersonality AI error: guild=%s model=%s err=%s", guild_id, self._ai_model, exc)
             return None
@@ -1154,11 +1187,16 @@ class ChatPersonalityCog(commands.Cog):
         if not msg:
             return self._finalize_single_message(msg)
 
+        # A second model call doubles the response time of the local model.
+        # Disabled by default; re-enable with CHATPERSONA_AI_REFINE=1.
+        if not self._ai_refine_enabled:
+            return self._finalize_single_message(msg)
+
         refine_chance = min(1.0, float(settings.get("ai_chance", 0.75) or 0.75) * 0.25)
         if random.random() >= refine_chance:
             return self._finalize_single_message(msg)
 
-        if self._groq_client is None or not settings.get("ai_enabled", True):
+        if self._ai_client is None or not settings.get("ai_enabled", True):
             return self._finalize_single_message(msg)
 
         can_use = await db.consume_chat_personality_ai_quota(guild_id)
@@ -1182,7 +1220,7 @@ class ChatPersonalityCog(commands.Cog):
         try:
             started = time.perf_counter()
             completion = await asyncio.wait_for(
-                self._groq_client.chat.completions.create(
+                self._ai_client.chat.completions.create(
                     model=self._ai_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -1203,6 +1241,8 @@ class ChatPersonalityCog(commands.Cog):
                 return out
         except asyncio.TimeoutError:
             logger.warning("ChatPersonality AI refine timeout: guild=%s", guild_id)
+        except AIClientError as exc:
+            logger.warning("ChatPersonality AI refine backend error: guild=%s err=%s", guild_id, exc)
         except Exception as exc:
             logger.exception("ChatPersonality AI refine error: guild=%s err=%s", guild_id, exc)
 

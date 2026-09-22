@@ -8,7 +8,7 @@ import os
 from typing import Optional
 from collections import defaultdict
 from datetime import datetime, timezone
-from groq import AsyncGroq
+from core.ai_client import get_ai_client, is_configured as ai_is_configured
 
 from deep_translator import GoogleTranslator
 from core import database_pg as db
@@ -28,7 +28,9 @@ except Exception as e:
 class TranslatorCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.client = AsyncGroq(api_key=os.getenv('GROQ_API_KEY')) if os.getenv('GROQ_API_KEY') else None
+        # Local Ollama backend instead of Groq (see core/ai_client.py)
+        self.client = get_ai_client() if ai_is_configured() else None
+        self.ai_model = os.getenv('TRANSLATOR_AI_MODEL') or os.getenv('OLLAMA_MODEL', 'pparikh2/phi3.5Q4_K_M')
         self.daily_ai_translations = defaultdict(lambda: {'count': 0, 'date': None})
         self.tier_settings = {
             'free': 30,
@@ -40,7 +42,7 @@ class TranslatorCog(commands.Cog):
     @app_commands.describe(
         original_language="Optional original language code (e.g. en, fr, de)",
         destination_language="Optional destination language code",
-        ai_powered="Enable AI-powered translation using Groq (limited daily uses)",
+        ai_powered="Enable AI-powered translation using the self-hosted model (limited daily uses)",
         text="The text to translate. (Optional if replying to a message)"
     )
     @app_commands.choices(ai_powered=[
@@ -119,7 +121,7 @@ class TranslatorCog(commands.Cog):
         # Check AI Limits
         if use_ai:
             if not getattr(self, 'client', None):
-                await ctx.send("❌ AI translation is not configured (missing API key).", ephemeral=True)
+                await ctx.send("❌ AI translation is not configured (OLLAMA_BASE_URL missing).", ephemeral=True)
                 return
 
             user_id = ctx.author.id
@@ -152,7 +154,7 @@ class TranslatorCog(commands.Cog):
                 system_prompt = f"You are an expert translator. Translate the following text from {source_name} to {dest_name}. Respond ONLY with the translated text, nothing else. No conversational filler or explanations."
                 
                 completion = await self.client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model=self.ai_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": text_to_translate}
