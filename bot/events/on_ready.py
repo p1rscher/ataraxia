@@ -17,7 +17,7 @@ async def on_ready():
     logger.info(f"Logged in as {bot.user} (id={bot.user.id})")
     logger.info("on_ready: Starting startup sequence...")
 
-    # Debug: welche app-commands sind aktuell im tree
+    # Debug: list the app commands currently in the tree
     logger.debug("Commands in bot.tree:")
     for cmd in bot.tree.get_commands():
         desc = getattr(cmd, 'description', 'No description (Context Menu)')

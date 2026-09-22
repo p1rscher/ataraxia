@@ -1573,7 +1573,7 @@ async def save_message(message_id: int, guild_id: int, channel_id: int,
                     content, current_version + 1, new_edited_at, message_id
                 )
         else:
-            # Neue Nachricht
+            # New message
             await conn.execute(
                 "INSERT INTO messages (message_id, guild_id, channel_id, author_id, content, created_at, edited_at) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7)",

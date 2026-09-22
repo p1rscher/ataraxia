@@ -162,9 +162,9 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 await db.add_temp_voice_channel(temp_channel.id, member.guild.id, member.id)
                 
             except discord.Forbidden:
-                logger.error(f"Keine Berechtigung, Voice-Channel in {member.guild.name} zu erstellen")
+                logger.error(f"No permission to create a voice channel in {member.guild.name}")
             except Exception as e:
-                logger.error(f"Fehler beim Erstellen des Temp-Voice-Channels: {e}", exc_info=True)
+                logger.error(f"Error creating the temporary voice channel: {e}", exc_info=True)
     
     # User left a voice channel
     if before.channel and before.channel != after.channel:

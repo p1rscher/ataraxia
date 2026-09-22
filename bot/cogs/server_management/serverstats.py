@@ -69,9 +69,9 @@ class ServerStatsCog(commands.Cog):
                 # logger.info(f"Updated {stat_type} channel {channel.id} in guild {guild.id}")
                 
         except discord.Forbidden:
-            logger.error(f"Keine Berechtigung, Kanal {channel.id} in Guild {guild.id} zu bearbeiten")
+            logger.error(f"No permission to edit channel {channel.id} in guild {guild.id}")
         except Exception as e:
-            logger.error(f"Fehler beim Aktualisieren von Statistik-Kanal {channel.id}: {e}", exc_info=True)
+            logger.error(f"Error updating statistics channel {channel.id}: {e}", exc_info=True)
 
     @tasks.loop(minutes=10)
     async def update_stats_slow(self):

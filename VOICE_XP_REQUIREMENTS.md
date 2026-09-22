@@ -1,91 +1,91 @@
-# Voice XP Requirements - Neue Features
+# Voice XP Requirements - New Features
 
-## 🎯 Übersicht
+## 🎯 Overview
 
-Ich habe ein komplett konfigurierbares System für Voice XP Anforderungen implementiert. Admins können jetzt genau steuern, unter welchen Bedingungen User Voice XP bekommen.
+I implemented a fully configurable system for Voice XP requirements. Admins can now control exactly which conditions users must meet to earn Voice XP.
 
-## 📊 Was wurde hinzugefügt?
+## 📊 What Was Added?
 
-### 1. **Neue Datenbank-Tabelle**
-- `voice_xp_requirements` - Speichert pro Server die Einstellungen
-- 4 Konfigurationsoptionen:
-  - `require_non_afk` - Müssen User nicht-AFK sein?
-  - `require_non_deaf` - Müssen User nicht-taub sein?
-  - `require_non_muted` - Müssen User nicht-stumm sein?
-  - `require_others_in_channel` - Müssen andere User im Channel sein?
+### 1. **New Database Table**
+- `voice_xp_requirements` - Stores the settings for each server
+- 4 configuration options:
+  - `require_non_afk` - Must users be non-AFK?
+  - `require_non_deaf` - Must users be non-deafened?
+  - `require_non_muted` - Must users be non-muted?
+  - `require_others_in_channel` - Must other users be in the channel?
 
-### 2. **Neue Discord Commands**
-Alle Commands unter `/voicexp-requirements`:
+### 2. **New Discord Commands**
+All commands are available under `/voicexp-requirements`:
 
-- `/voicexp-requirements view` - Zeigt aktuelle Einstellungen
-- `/voicexp-requirements set-afk [allow]` - AFK-User XP erlauben/verbieten
-- `/voicexp-requirements set-deaf [allow]` - Tauben-User XP erlauben/verbieten
-- `/voicexp-requirements set-muted [allow]` - Stummen-User XP erlauben/verbieten
-- `/voicexp-requirements set-alone [allow]` - Allein-im-Channel XP erlauben/verbieten
-- `/voicexp-requirements reset` - Auf Standardeinstellungen zurücksetzen
+- `/voicexp-requirements view` - Shows the current settings
+- `/voicexp-requirements set-afk [allow]` - Allow or deny XP for AFK users
+- `/voicexp-requirements set-deaf [allow]` - Allow or deny XP for deafened users
+- `/voicexp-requirements set-muted [allow]` - Allow or deny XP for muted users
+- `/voicexp-requirements set-alone [allow]` - Allow or deny XP when alone in a channel
+- `/voicexp-requirements reset` - Reset to the default settings
 
-### 3. **API-Endpunkte**
-- `GET /api/guilds/{guild_id}/voicexp/requirements` - Aktuelle Einstellungen abrufen
-- `PUT /api/guilds/{guild_id}/voicexp/requirements` - Alle Einstellungen auf einmal ändern
-- `PATCH /api/guilds/{guild_id}/voicexp/requirements` - Einzelne Einstellung ändern
+### 3. **API Endpoints**
+- `GET /api/guilds/{guild_id}/voicexp/requirements` - Retrieve the current settings
+- `PUT /api/guilds/{guild_id}/voicexp/requirements` - Change all settings at once
+- `PATCH /api/guilds/{guild_id}/voicexp/requirements` - Change a single setting
 
-### 4. **Dashboard-Integration**
-- Neue Route: `/dashboard/app/api/voicexp/requirements/route.ts`
-- Unterstützt Mock-Modus für lokale Entwicklung
-- Bereit für Frontend-Integration
+### 4. **Dashboard Integration**
+- New route: `/dashboard/app/api/voicexp/requirements/route.ts`
+- Supports mock mode for local development
+- Ready for frontend integration
 
-## 🔧 Technische Details
+## 🔧 Technical Details
 
-### Datenbank-Funktionen (database_pg.py)
+### Database Functions (database_pg.py)
 ```python
-await db.get_voice_xp_requirements(guild_id)  # Einstellungen abrufen
-await db.set_voice_xp_requirement(guild_id, 'require_non_afk', True)  # Einzeln setzen
-await db.set_all_voice_xp_requirements(guild_id, ...)  # Alle auf einmal setzen
+await db.get_voice_xp_requirements(guild_id)  # Retrieve settings
+await db.set_voice_xp_requirement(guild_id, 'require_non_afk', True)  # Set one setting
+await db.set_all_voice_xp_requirements(guild_id, ...)  # Set all settings at once
 ```
 
-### Standard-Einstellungen
-- ✅ `require_non_afk` = True (AFK-User bekommen KEINE XP)
-- ✅ `require_non_deaf` = True (Taube User bekommen KEINE XP)
-- ❌ `require_non_muted` = False (Stumme User bekommen XP)
-- ✅ `require_others_in_channel` = True (Allein-im-Channel = KEINE XP)
+### Default Settings
+- ✅ `require_non_afk` = True (AFK users do NOT earn XP)
+- ✅ `require_non_deaf` = True (Deafened users do NOT earn XP)
+- ❌ `require_non_muted` = False (Muted users earn XP)
+- ✅ `require_others_in_channel` = True (Alone in a channel = NO XP)
 
-### Bug-Fixes inklusive!
-Das System behebt auch den ursprünglichen Bug:
-- Wenn eine 2. Person einem Channel beitritt, bekommt die erste Person jetzt auch XP
-- Wenn jemand einen Channel verlässt und nur 1 Person übrig bleibt, wird deren Session beendet
-- Bots werden korrekt ignoriert
-- **Beim Bot-Restart werden alle Voice Sessions synchronisiert** - User die bereits in Voice Channels sind bekommen automatisch Sessions erstellt
+### Bug Fixes Included!
+The system also fixes the original bug:
+- When a second person joins a channel, the first person now earns XP as well
+- When someone leaves a channel and only one person remains, their session is ended
+- Bots are correctly ignored
+- **All voice sessions are synchronized when the bot restarts** - users who are already in voice channels automatically receive sessions
 
-## 🚀 Verwendung
+## 🚀 Usage
 
-### Als Discord Admin:
+### As a Discord Admin:
 ```
 1. /voicexp-requirements view
-   → Zeigt aktuelle Einstellungen
+   → Shows the current settings
 
 2. /voicexp-requirements set-alone true
-   → User bekommen jetzt auch XP wenn sie alleine sind
+   → Users now earn XP when they are alone
 
 3. /voicexp-requirements set-deaf false
-   → Taube User bekommen jetzt KEINE XP mehr
+   → Deafened users no longer earn XP
 
 4. /voicexp-requirements reset
-   → Zurück zu den Standardeinstellungen
+   → Returns to the default settings
 ```
 
-### Als API-Nutzer:
+### As an API User:
 ```bash
-# Einstellungen abrufen
+# Retrieve settings
 GET http://localhost:8000/api/guilds/123456789/voicexp/requirements
 
-# Einzelne Einstellung ändern
+# Change a single setting
 PATCH http://localhost:8000/api/guilds/123456789/voicexp/requirements
 {
   "requirement": "require_non_afk",
   "value": false
 }
 
-# Alle Einstellungen ändern
+# Change all settings
 PUT http://localhost:8000/api/guilds/123456789/voicexp/requirements
 {
   "require_non_afk": true,
@@ -95,20 +95,20 @@ PUT http://localhost:8000/api/guilds/123456789/voicexp/requirements
 }
 ```
 
-## 📝 Geänderte Dateien
+## 📝 Changed Files
 
-1. ✅ `core/database_pg.py` - Neue Tabelle + Funktionen
-2. ✅ `events/on_voice_state_update.py` - Bug-Fixes + Requirements-Check
-3. ✅ `utils/voice_xp.py` - Requirements-basierte XP-Vergabe
-4. ✅ `cogs/voice_xp_requirements.py` - Neuer Command-Cog
-5. ✅ `api/main.py` - Neue API-Endpunkte
-6. ✅ `dashboard/app/api/voicexp/requirements/route.ts` - Dashboard-Route
+1. ✅ `core/database_pg.py` - New table + functions
+2. ✅ `events/on_voice_state_update.py` - Bug fixes + requirements check
+3. ✅ `utils/voice_xp.py` - Requirements-based XP allocation
+4. ✅ `cogs/voice_xp_requirements.py` - New command cog
+5. ✅ `api/main.py` - New API endpoints
+6. ✅ `dashboard/app/api/voicexp/requirements/route.ts` - Dashboard route
 
 ## ✨ Next Steps
 
-Für das Dashboard brauchst du noch:
-1. Frontend-Komponente für die Einstellungen
-2. Integration in die XP-Settings-Seite
-3. Toggle-Switches für die 4 Optionen
+For the dashboard, you still need:
+1. A frontend component for the settings
+2. Integration into the XP settings page
+3. Toggle switches for the 4 options
 
-Möchtest du, dass ich das auch noch erstelle?
+Would you like me to create those as well?

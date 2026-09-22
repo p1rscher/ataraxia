@@ -81,7 +81,7 @@ async def initialize_guild_join_state(
             logger.error(f"Failed to sync commands: {e}")
 
 async def on_guild_join(guild: discord.Guild):
-    """Wird getriggert wenn der Bot einem neuen Server beitritt"""
+    """Triggered when the bot joins a new server."""
     logger.info(f"Bot joined new guild: {guild.name} (ID: {guild.id})")
     await initialize_guild_join_state(guild)
 
