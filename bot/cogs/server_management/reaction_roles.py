@@ -11,7 +11,6 @@ import discord
 import emoji as emoji_lib
 from discord import app_commands
 from discord.ext import commands
-from discord.ext import commands
 
 from core import database_pg as db
 from utils.embeds import get_guild_color
@@ -937,9 +936,24 @@ class ReactionRolesCog(commands.Cog):
             return "Button panels can have at most 25 role slots. Remove some slots before publishing."
 
         return None
+
+    async def _migrate_panel_message_id(self, old_message_id: int, new_message_id: int):
+        async with db._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE reaction_role_messages SET message_id=$1 WHERE message_id=$2",
+                new_message_id,
+                old_message_id,
+            )
+            await conn.execute(
+                "UPDATE reaction_role_entries SET message_id=$1 WHERE message_id=$2",
+                new_message_id,
+                old_message_id,
+            )
  
     async def publish_panel(self, message_id: int, interaction: commands.Context):
         logger.info(f"Publishing/Updating reaction role panel {message_id}")
+        target_msg = None
+        persisted_message_id = message_id
         
         try:
             await getattr(interaction, "response", interaction).defer(ephemeral=True)
@@ -975,23 +989,21 @@ class ReactionRolesCog(commands.Cog):
             
             panel_to_use = dict(panel)
             if message_id < 0:
-                # Claim real ID first
-                real_msg = await channel.send("Publishing panel...")
-                panel_to_use['message_id'] = real_msg.id
-                
-                # Update DB
-                async with db._pool.acquire() as conn:
-                    await conn.execute("UPDATE reaction_role_messages SET message_id=$1 WHERE message_id=$2", real_msg.id, message_id)
-                    await conn.execute("UPDATE reaction_role_entries SET message_id=$1 WHERE message_id=$2", real_msg.id, message_id)
-
-            if message_id < 0:
-                target_msg = real_msg
+                target_msg = await channel.send("Publishing panel...")
+                panel_to_use['message_id'] = target_msg.id
             else:
-                target_msg = await channel.fetch_message(message_id)
+                try:
+                    target_msg = await channel.fetch_message(message_id)
+                except discord.NotFound:
+                    target_msg = await channel.send("Publishing panel...")
+                    panel_to_use['message_id'] = target_msg.id
                 
             # ATTACH UI components
             view = DynamicRoleView(panel_to_use, entries, guild)
             await target_msg.edit(content=None, embed=embed, view=view, attachments=embed_attachments)
+            if panel_to_use['message_id'] != message_id:
+                await self._migrate_panel_message_id(message_id, panel_to_use['message_id'])
+                persisted_message_id = panel_to_use['message_id']
             try:
                 await target_msg.clear_reactions()
             except discord.Forbidden:
@@ -1000,7 +1012,11 @@ class ReactionRolesCog(commands.Cog):
             await _safe_send(interaction, f"✅ Reaction panel successfully {action_str} in {channel.mention}!", ephemeral=True)
         except Exception as e:
             logger.error(f"Error publishing panel: {e}", exc_info=True)
-            logger.error(f"Error publishing panel: {e}", exc_info=True)
+            if target_msg and target_msg.id != persisted_message_id:
+                try:
+                    await target_msg.delete()
+                except Exception:
+                    pass
             try:
                 await _safe_send(interaction, f"An unexpected error occurred: `{e}`", ephemeral=True)
             except Exception:
@@ -1024,7 +1040,7 @@ class ReactionRolesCog(commands.Cog):
         logger.info("Initializing persistent reaction role dashboard buttons...")
         # Since 'get_reaction_role_messages' requires guild_id, we just query ALL.
         async with db._pool.acquire() as conn:
-            panels = await conn.fetch("SELECT * FROM reaction_role_messages")
+            panels = await conn.fetch("SELECT * FROM reaction_role_messages WHERE message_id > 0")
         for p in panels:
             entries = await db.get_reaction_role_entries(p['message_id'])
             guild = self.bot.get_guild(p['guild_id'])
