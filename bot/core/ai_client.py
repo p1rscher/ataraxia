@@ -157,6 +157,96 @@ def strip_surrounding_quotes(text: str) -> str:
     return text.strip()
 
 
+class _StreamFilter:
+    """Applies the same cleanup as :func:`sanitize_model_output` to a stream
+    of text deltas, even when a ``<think>`` tag or a leading role label is
+    split across two network chunks.
+
+    Usage::
+
+        f = _StreamFilter()
+        for piece in incoming_deltas:
+            visible = f.feed(piece)   # "" while a tag/label is undecided
+            if visible:
+                ...
+        visible = f.flush()           # call once after the stream ends
+    """
+
+    # Chars to accumulate before deciding whether the response opens with a
+    # role label ("Assistant: ", "Bot - ", ...). Long enough to hold the
+    # longest label plus a little slack, short enough not to noticeably
+    # delay the first visible text.
+    _LABEL_HOLD = 24
+
+    def __init__(self) -> None:
+        self._pending = ""       # raw buffer, used only for <think> detection
+        self._in_think = False
+        self._label_buf = ""     # buffer for the leading-label decision
+        self._label_checked = False
+
+    def _strip_think(self, piece: str) -> str:
+        if not piece:
+            return ""
+        self._pending += piece
+        out_parts: list[str] = []
+        while True:
+            if self._in_think:
+                idx = self._pending.find("</think>")
+                if idx == -1:
+                    if len(self._pending) > 4000:
+                        # The model never closed the tag; stop hiding text
+                        # forever and just drop what we buffered so far.
+                        self._in_think = False
+                        self._pending = ""
+                    break
+                self._pending = self._pending[idx + len("</think>"):]
+                self._in_think = False
+                continue
+
+            open_idx = self._pending.find("<think>")
+            if open_idx != -1:
+                out_parts.append(self._pending[:open_idx])
+                self._pending = self._pending[open_idx + len("<think>"):]
+                self._in_think = True
+                continue
+
+            # No confirmed "<think>" yet - but the buffered tail might be
+            # the start of one, so hold it back until we're sure.
+            max_prefix = min(len(self._pending), len("<think>") - 1)
+            hold = 0
+            for n in range(max_prefix, 0, -1):
+                if "<think>".startswith(self._pending[-n:]):
+                    hold = n
+                    break
+            safe_len = len(self._pending) - hold
+            out_parts.append(self._pending[:safe_len])
+            self._pending = self._pending[safe_len:]
+            break
+        return "".join(out_parts)
+
+    def feed(self, piece: str) -> str:
+        """Feed one incoming text delta, return the portion safe to show."""
+        cleaned = self._strip_think(piece)
+        if self._label_checked:
+            return cleaned
+        if not cleaned:
+            return ""
+        self._label_buf += cleaned
+        if len(self._label_buf) < self._LABEL_HOLD:
+            return ""  # still undecided, keep holding
+        self._label_checked = True
+        return _LEADING_LABEL_RE.sub("", self._label_buf, count=1)
+
+    def flush(self) -> str:
+        """Call once after the stream ends to release any held-back text."""
+        tail = "" if self._in_think else self._pending
+        self._pending = ""
+        if not self._label_checked:
+            self._label_checked = True
+            return _LEADING_LABEL_RE.sub("", self._label_buf + tail, count=1)
+        return tail
+
+
 # --------------------------------------------------------------------------- #
 # Client
 # --------------------------------------------------------------------------- #
@@ -445,6 +535,102 @@ class AsyncOllama:
                 ) from exc
 
         raise AIClientError(f"Local AI backend is unreachable ({self.base_url}): {last_error}")
+
+    async def stream_chat(
+        self,
+        *,
+        messages: Sequence[dict],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        stop: Optional[Iterable[str]] = None,
+        usage_sink: Optional[dict] = None,
+    ):
+        """Yield text deltas as they arrive from the model (async generator).
+
+        If ``usage_sink`` is given, it is filled in-place with
+        ``prompt_tokens`` / ``completion_tokens`` / ``total_tokens`` once the
+        backend reports them (native Ollama sends these on its final
+        ``done: true`` message; the OpenAI-compatible route usually does not
+        during streaming, so the dict may stay empty in that mode).
+
+        Works against both the native Ollama streaming format (newline-
+        delimited JSON objects) and the OpenAI-compatible SSE format
+        (``data: {...}`` lines), matching whichever style ``OLLAMA_BASE_URL``
+        was configured for. Only one request runs at a time, same as
+        ``_chat_completion`` (see ``OLLAMA_MAX_CONCURRENCY``).
+
+        Retries are not applied here: a stream that fails midway has already
+        shown the user partial text, so silently retrying would duplicate or
+        contradict what they've seen. Callers should catch ``AIClientError``
+        and decide how to surface a partial answer.
+        """
+        target_model = model or self.model
+        payload = self._build_payload(
+            messages=messages, model=target_model, temperature=temperature,
+            max_tokens=max_tokens, top_p=top_p, stop=stop,
+        )
+        payload["stream"] = True
+
+        session = await self._get_session()
+        stream_filter = _StreamFilter()
+        got_any_content = False
+
+        async with self._semaphore:
+            try:
+                async with session.post(self._endpoint, json=payload, headers=self._headers) as resp:
+                    if resp.status >= 400:
+                        body = await resp.text()
+                        snippet = body[:400].replace("\n", " ")
+                        raise AIClientError(f"Ollama HTTP {resp.status}: {snippet}")
+
+                    async for raw_line in resp.content:
+                        line = raw_line.decode("utf-8", errors="ignore").strip()
+                        if not line:
+                            continue
+                        if line.startswith("data:"):  # OpenAI-compatible SSE
+                            line = line[len("data:"):].strip()
+                            if line == "[DONE]":
+                                break
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        if "choices" in obj:  # OpenAI format
+                            choice = (obj.get("choices") or [{}])[0]
+                            piece = (choice.get("delta") or {}).get("content") or ""
+                            done = bool(choice.get("finish_reason"))
+                        else:  # native Ollama format
+                            piece = ((obj.get("message") or {}).get("content")) or ""
+                            done = bool(obj.get("done"))
+                            if done and usage_sink is not None:
+                                prompt_tokens = int(obj.get("prompt_eval_count") or 0)
+                                completion_tokens = int(obj.get("eval_count") or 0)
+                                usage_sink["prompt_tokens"] = prompt_tokens
+                                usage_sink["completion_tokens"] = completion_tokens
+                                usage_sink["total_tokens"] = prompt_tokens + completion_tokens
+
+                        if piece:
+                            visible = stream_filter.feed(piece)
+                            if visible:
+                                got_any_content = True
+                                yield visible
+                        if done:
+                            break
+            except aiohttp.ClientError as exc:
+                raise AIClientError(
+                    f"Local AI backend is unreachable ({self.base_url}): {exc}"
+                ) from exc
+
+        tail = stream_filter.flush()
+        if tail:
+            got_any_content = True
+            yield tail
+
+        if not got_any_content:
+            raise AIClientError("The local model returned an empty response.")
 
     async def list_models(self) -> list[str]:
         """Return the names of installed models (for health checks)."""

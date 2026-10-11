@@ -8,10 +8,21 @@ from core.ai_client import get_ai_client, AIClientError
 import logging
 from dotenv import load_dotenv
 from collections import defaultdict
+from typing import Optional
 import time
 from datetime import datetime, timezone, timedelta
 from core import database_pg as db
 from utils.embeds import get_guild_color
+from utils.stream_responder import StreamingResponder
+
+# Discord embed description hard limit is 4096 chars; stay a little under it
+# so the trailing "▌" cursor and the truncation notice never push us over.
+_EMBED_DESC_LIMIT = 4096
+_LIVE_PREVIEW_LIMIT = 4000
+# Never edit a message more than once per this many seconds (Discord's
+# per-message edit rate limit is roughly a handful of requests per few
+# seconds; 2s keeps us comfortably under it even with jitter/retries).
+_STREAM_EDIT_INTERVAL_SECONDS = 2.0
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -199,6 +210,7 @@ class AICog(commands.Cog):
         # Defer response
         await ctx.defer()
         
+        message = None  # becomes the streaming placeholder once it's sent
         try:
             # Check if user is main developer
             is_main_dev = user_id == self.main_dev_id
@@ -231,83 +243,96 @@ class AICog(commands.Cog):
             # Add current question
             messages.append({"role": "user", "content": question})
             
-            # Call the local model through Ollama
-            completion = await self.client.chat.completions.create(
-                model=self.ai_model,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=settings['max_tokens'],
-                stream=False,
-            )
-            
-            response = completion.choices[0].message.content
-            
-            # ✅ INCREMENT DAILY COUNTER
-            user_usage['count'] += 1
-            
-            # ✅ TRACK COSTS (for monitoring)
-            self.total_daily_requests += 1
-            # Local model = no API costs. The value is retained only as a
-            # reference estimate and can be set via .env.
-            tokens_used = completion.usage.total_tokens if hasattr(completion, 'usage') else 250
-            cost_per_token = float(os.getenv('AI_COST_PER_TOKEN', '0.0'))
-            self.daily_cost_estimate += tokens_used * cost_per_token
-            
-            # ✅ COST ALERT CHECK (every 100 requests)
-            if self.total_daily_requests % 100 == 0:
-                await self._check_cost_alert()
-            
-            # Check if owner requested an action
-            action_result = None
-            if is_main_dev:
-                action_result = await self._process_owner_actions(ctx, question, response)
-            
-            # Build response embed
-            embed = discord.Embed(
-                title=f"{settings['emoji']} AI Response",
-                color=await get_guild_color(ctx.guild.id if ctx.guild.id else None)
-            )
-            
-            # Add question field
+            # --- Streaming placeholder -----------------------------------
+            # Sent once, then edited in place as the answer streams in.
             question_display = question if len(question) <= 1024 else question[:1021] + "..."
-            embed.add_field(name="❓ Question", value=question_display, inline=False)
-            
-            # Split response into chunks if too long (field value limit is 1024 chars)
-            if len(response) <= 1024:
-                embed.add_field(name="💬 Answer", value=response, inline=False)
-            else:
-                chunks = []
-                while response:
-                    if len(response) <= 1024:
-                        chunks.append(response)
-                        break
-                    else:
-                        split_pos = response[:1024].rfind(' ')
-                        if split_pos == -1:
-                            split_pos = 1024
-                        chunks.append(response[:split_pos])
-                        response = response[split_pos:].lstrip()
-                
-                for i, chunk in enumerate(chunks):
-                    field_name = "💬 Answer" if i == 0 else "💬 Answer (continued)"
-                    embed.add_field(name=field_name, value=chunk, inline=False)
-            
-            # Add action result if owner executed something
-            if action_result:
-                embed.add_field(name="⚙️ Action Executed", value=action_result, inline=False)
-                embed.color = discord.Color.gold()
-            
-            # Footer with usage info
-            footer_text = (
-                f"Asked by {ctx.author.display_name} • "
-                f"{tier.replace('_', ' ').title()} • "
-                f"{user_usage['count']}/{settings['daily_limit']} today • "
-                f"{self.ai_model}"
-            )
-            embed.set_footer(text=footer_text)
+            embed_color = await get_guild_color(ctx.guild.id if ctx.guild.id else None)
 
-            await ctx.send(embed=embed)
-            
+            placeholder = discord.Embed(title=f"{settings['emoji']} AI Response", color=embed_color)
+            placeholder.add_field(name="❓ Question", value=question_display, inline=False)
+            placeholder.description = "⏳ *Thinking...*"
+            placeholder.set_footer(text="Generating…")
+            message = await ctx.send(embed=placeholder)
+
+            # Mutable extras filled in once the stream finishes successfully;
+            # `render` below reads them at the time of the final edit.
+            final_extras = {"action_result": None, "footer": None}
+
+            def render(text: str, done: bool, error: Optional[BaseException]) -> dict:
+                out = discord.Embed(title=f"{settings['emoji']} AI Response", color=embed_color)
+                out.add_field(name="❓ Question", value=question_display, inline=False)
+
+                if not text:
+                    body = "*(keine Antwort erhalten)*" if done else "⏳ *Thinking...*"
+                elif len(text) <= _LIVE_PREVIEW_LIMIT:
+                    body = text if done else text + " ▌"
+                else:
+                    body = text[:_LIVE_PREVIEW_LIMIT] + "\n\n*(…Antwort geht unten weiter)*"
+                out.description = body[:_EMBED_DESC_LIMIT]
+
+                if error is not None:
+                    out.color = discord.Color.red()
+                    out.set_footer(
+                        text="⚠️ Generation failed - response may be incomplete"
+                        if text else "⚠️ Generation failed"
+                    )
+                elif done and final_extras["action_result"]:
+                    out.add_field(name="⚙️ Action Executed", value=final_extras["action_result"], inline=False)
+                    out.color = discord.Color.gold()
+                    out.set_footer(text=final_extras["footer"] or "")
+                elif done:
+                    out.set_footer(text=final_extras["footer"] or "")
+                else:
+                    out.set_footer(text="Generating…")
+
+                return {"embed": out}
+
+            response = ""
+            usage_sink: dict = {}
+
+            # StreamingResponder guarantees:
+            #  - at most one message.edit() every _STREAM_EDIT_INTERVAL_SECONDS
+            #  - exactly one final edit on exit, success or failure, so a fast
+            #    answer that finishes inside the first interval still ends up
+            #    with exactly one edit total (same as the old non-streaming path)
+            async with StreamingResponder(message, render, min_interval=_STREAM_EDIT_INTERVAL_SECONDS) as responder:
+                async for delta in self.client.stream_chat(
+                    model=self.ai_model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=settings['max_tokens'],
+                    usage_sink=usage_sink,
+                ):
+                    response += delta
+                    responder.update(response)
+
+                # Stream completed without raising - safe to count it and
+                # run owner actions before the guaranteed final edit fires.
+                user_usage['count'] += 1
+                self.total_daily_requests += 1
+                # Local model = no API costs; kept only as a reference figure.
+                tokens_used = usage_sink.get('total_tokens') or max(1, len(response) // 4)
+                cost_per_token = float(os.getenv('AI_COST_PER_TOKEN', '0.0'))
+                self.daily_cost_estimate += tokens_used * cost_per_token
+                if self.total_daily_requests % 100 == 0:
+                    await self._check_cost_alert()
+
+                if is_main_dev:
+                    final_extras["action_result"] = await self._process_owner_actions(ctx, question, response)
+
+                final_extras["footer"] = (
+                    f"Asked by {ctx.author.display_name} • "
+                    f"{tier.replace('_', ' ').title()} • "
+                    f"{user_usage['count']}/{settings['daily_limit']} today • "
+                    f"{self.ai_model}"
+                )
+
+            # The embed description can only hold ~4000 visible chars; send
+            # anything beyond that as ordinary follow-up messages.
+            if len(response) > _LIVE_PREVIEW_LIMIT:
+                for chunk in self._chunk_text(response[_LIVE_PREVIEW_LIMIT:], 1900):
+                    await ctx.channel.send(chunk)
+
             # Save to conversation history
             self.conversation_history[user_id].append((question, response))
             if len(self.conversation_history[user_id]) > self.max_history:
@@ -319,6 +344,10 @@ class AICog(commands.Cog):
             )
 
         except AIClientError as e:
+            # If a placeholder message exists, StreamingResponder's __aexit__
+            # already edited it to show whatever partial text was streamed
+            # plus an error note - the ephemeral message below is just a
+            # clear heads-up for the requester on top of that.
             logger.error(f"AI backend unreachable for user {user_id}: {e}", exc_info=True)
             await ctx.send(
                 "❌ The AI backend is currently unreachable.\n"
@@ -332,6 +361,22 @@ class AICog(commands.Cog):
                 f"If this persists, please contact support!",
                 ephemeral=True
             )
+
+    @staticmethod
+    def _chunk_text(text: str, limit: int) -> list:
+        """Split text into pieces up to `limit` chars, breaking on
+        whitespace where possible."""
+        chunks = []
+        while text:
+            if len(text) <= limit:
+                chunks.append(text)
+                break
+            split_pos = text[:limit].rfind(' ')
+            if split_pos == -1:
+                split_pos = limit
+            chunks.append(text[:split_pos])
+            text = text[split_pos:].lstrip()
+        return chunks
     
     @ai_group.command(name="status", description="Check your AI usage tier and limits")
     async def aistatus(self, ctx: commands.Context):
