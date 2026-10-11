@@ -924,6 +924,20 @@ class ReactionRolesCog(commands.Cog):
         except Exception:
             return guild, None
 
+    def _validate_panel_configuration(self, panel: dict, entries: list) -> Optional[str]:
+        if not entries:
+            return "Add at least one role slot before publishing this panel."
+
+        component_type = panel.get("component_type", "Buttons")
+        if component_type == "Select":
+            option_count = len(entries) + (1 if panel.get("role_removal", True) else 0)
+            if option_count > 25:
+                return "Select-menu panels can have at most 25 total options. Remove some slots or disable role removal before publishing."
+        elif len(entries) > 25:
+            return "Button panels can have at most 25 role slots. Remove some slots before publishing."
+
+        return None
+ 
     async def publish_panel(self, message_id: int, interaction: commands.Context):
         logger.info(f"Publishing/Updating reaction role panel {message_id}")
         
@@ -935,16 +949,28 @@ class ReactionRolesCog(commands.Cog):
         try:
             panel = await db.get_reaction_role_message(message_id)
             if not panel:
-                if not interaction.response.is_done():
-                    await _safe_send(interaction, "Error: Panel not found.", ephemeral=True)
+                await _safe_send(interaction, "Error: Panel not found.", ephemeral=True)
                 return
 
             guild = interaction.guild
-            if not guild: return
+            if not guild:
+                await _safe_send(interaction, "This panel can only be published from a server.", ephemeral=True)
+                return
             channel = guild.get_channel(panel['channel_id'])
-            if not channel: return
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(panel['channel_id'])
+                except Exception:
+                    channel = None
+            if channel is None:
+                await _safe_send(interaction, "I couldn't find the target channel for this panel.", ephemeral=True)
+                return
 
             entries = await db.get_reaction_role_entries(message_id)
+            validation_error = self._validate_panel_configuration(panel, entries)
+            if validation_error:
+                await _safe_send(interaction, validation_error, ephemeral=True)
+                return
             embed, embed_attachments = await self._build_panel_embed_and_attachments(panel, entries)
             
             panel_to_use = dict(panel)
@@ -970,16 +996,15 @@ class ReactionRolesCog(commands.Cog):
                 await target_msg.clear_reactions()
             except discord.Forbidden:
                 pass
-            
             action_str = "published" if message_id < 0 else "updated"
             await _safe_send(interaction, f"✅ Reaction panel successfully {action_str} in {channel.mention}!", ephemeral=True)
         except Exception as e:
             logger.error(f"Error publishing panel: {e}", exc_info=True)
-            if not getattr(interaction, "response", interaction).is_done():
-                try:
-                    await _safe_send(interaction, f"An unexpected error occurred: `{e}`", ephemeral=True)
-                except Exception:
-                    pass
+            logger.error(f"Error publishing panel: {e}", exc_info=True)
+            try:
+                await _safe_send(interaction, f"An unexpected error occurred: `{e}`", ephemeral=True)
+            except Exception:
+                pass
     @reactionroles_group.command(name="dashboard", description="Open the main Reaction Roles setup dashboard")
     @commands.has_permissions(administrator=True)
     @commands.guild_only()
