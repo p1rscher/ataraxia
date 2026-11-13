@@ -1,49 +1,9 @@
-# core/ai_client.py
+"""OpenAI-compatible multi-provider AI client for Ataraxia.
+
+Groq is tried first by default; Gemini is used automatically if the primary
+provider is unavailable, rejects the key/model, or returns a rate-limit error.
+The client uses aiohttp (already installed through discord.py).
 """
-Ollama backend for the Ataraxia bot.
-
-Drop-in replacement for ``groq.AsyncGroq``. The calling syntax remains
-identical, so existing cogs only need to be updated when importing and
-creating the client:
-
-    from core.ai_client import get_ai_client
-
-    client = get_ai_client()
-    completion = await client.chat.completions.create(
-        model="pparikh2/phi3.5Q4_K_M",
-        messages=[{"role": "user", "content": "hi"}],
-        temperature=0.7,
-        max_tokens=200,
-        stream=False,
-    )
-    text = completion.choices[0].message.content
-    tokens = completion.usage.total_tokens
-
-HTTP communication runs through aiohttp (already included with discord.py,
-so no additional dependency is required).
-
-The native Ollama chat API is used::
-
-    POST {OLLAMA_BASE_URL}/api/chat
-    {"model": ..., "messages": [...], "stream": false,
-     "keep_alive": "30m", "options": {"temperature": ..., "num_predict": ...}}
-
-If OLLAMA_BASE_URL ends with ``/v1``, the OpenAI-compatible route
-``/v1/chat/completions`` is used automatically.
-
-Configuration (all via .env on the dedicated server):
-
-    OLLAMA_BASE_URL          e.g. http://100.x.y.z:8080  (required)
-    OLLAMA_API_KEY           gateway bearer token         (recommended)
-    OLLAMA_MODEL             default model                (required)
-    OLLAMA_TIMEOUT_SECONDS   total timeout, default 120
-    OLLAMA_CONNECT_TIMEOUT   connection timeout, default 10
-    OLLAMA_MAX_RETRIES       retries, default 2
-    OLLAMA_MAX_CONCURRENCY   parallel requests, default 1
-    OLLAMA_KEEP_ALIVE        keep model in RAM, default 30m
-    OLLAMA_NUM_CTX           context window, default 8192
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -60,25 +20,14 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-# Some models write internal thoughts in <think> blocks. Phi-3.5 normally does
-# not, but other models do, so remove them generically.
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
-_LEADING_LABEL_RE = re.compile(
-    r"^\s*(assistant|ai|bot|answer|reply|response)\s*[:\-]\s*", re.IGNORECASE
-)
-_SURROUNDING_QUOTES_RE = re.compile(r'^\s*["\'\u201c\u201e\u00ab](.*)["\'\u201d\u201c\u00bb]\s*$', re.DOTALL)
-
-# HTTP statuses for which retrying makes sense.
-_RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+_LEADING_LABEL_RE = re.compile(r"^\s*(assistant|ai|bot|answer|reply|response)\s*[:\-]\s*", re.IGNORECASE)
+_SURROUNDING_QUOTES_RE = re.compile(r"^\s*[\"'\u201c\u201e\u00ab](.*)[\"'\u201d\u201c\u00bb]\s*$", re.DOTALL)
 
 
 class AIClientError(RuntimeError):
-    """Error communicating with the Ollama backend."""
+    """Error communicating with every configured AI provider."""
 
-
-# --------------------------------------------------------------------------- #
-# Response objects (API-compatible with groq / openai)
-# --------------------------------------------------------------------------- #
 
 @dataclass
 class Usage:
@@ -111,552 +60,272 @@ class ChatCompletion:
     raw: dict = field(default_factory=dict, repr=False)
 
 
-# --------------------------------------------------------------------------- #
-# Helper functions
-# --------------------------------------------------------------------------- #
-
-def _env_str(name: str, default: str = "") -> str:
-    value = os.getenv(name)
-    return value.strip() if value and value.strip() else default
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(_env_str(name, str(default)))
-    except (TypeError, ValueError):
-        logger.warning("ai_client: %s is not a valid number; using %s", name, default)
-        return default
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(float(_env_str(name, str(default))))
-    except (TypeError, ValueError):
-        logger.warning("ai_client: %s is not a valid number; using %s", name, default)
-        return default
+def _env(name: str, default: str = "") -> str:
+    return (os.getenv(name) or "").strip() or default
 
 
 def sanitize_model_output(text: str) -> str:
-    """Remove reasoning blocks and role prefixes from the model response."""
     if not text:
         return ""
-    cleaned = _THINK_BLOCK_RE.sub("", text)
-    cleaned = _LEADING_LABEL_RE.sub("", cleaned)
-    return cleaned.strip()
+    return _LEADING_LABEL_RE.sub("", _THINK_BLOCK_RE.sub("", text)).strip()
 
 
 def strip_surrounding_quotes(text: str) -> str:
-    """Small models often wrap their response in quotation marks."""
     if not text:
         return ""
     match = _SURROUNDING_QUOTES_RE.match(text.strip())
-    if match:
-        inner = match.group(1).strip()
-        if inner:
-            return inner
-    return text.strip()
+    return match.group(1).strip() if match and match.group(1).strip() else text.strip()
 
 
 class _StreamFilter:
-    """Applies the same cleanup as :func:`sanitize_model_output` to a stream
-    of text deltas, even when a ``<think>`` tag or a leading role label is
-    split across two network chunks.
-
-    Usage::
-
-        f = _StreamFilter()
-        for piece in incoming_deltas:
-            visible = f.feed(piece)   # "" while a tag/label is undecided
-            if visible:
-                ...
-        visible = f.flush()           # call once after the stream ends
-    """
-
-    # Chars to accumulate before deciding whether the response opens with a
-    # role label ("Assistant: ", "Bot - ", ...). Long enough to hold the
-    # longest label plus a little slack, short enough not to noticeably
-    # delay the first visible text.
-    _LABEL_HOLD = 24
-
+    """Strip reasoning blocks and leading role labels across SSE chunks."""
     def __init__(self) -> None:
-        self._pending = ""       # raw buffer, used only for <think> detection
-        self._in_think = False
-        self._label_buf = ""     # buffer for the leading-label decision
-        self._label_checked = False
+        self.pending = ""
+        self.in_think = False
+        self.label_buf = ""
+        self.label_checked = False
 
     def _strip_think(self, piece: str) -> str:
-        if not piece:
-            return ""
-        self._pending += piece
-        out_parts: list[str] = []
-        while True:
-            if self._in_think:
-                idx = self._pending.find("</think>")
-                if idx == -1:
-                    if len(self._pending) > 4000:
-                        # The model never closed the tag; stop hiding text
-                        # forever and just drop what we buffered so far.
-                        self._in_think = False
-                        self._pending = ""
+        self.pending += piece
+        output = []
+        while self.pending:
+            if self.in_think:
+                end = self.pending.find("</think>")
+                if end < 0:
+                    if len(self.pending) > 4000:
+                        self.pending = ""
                     break
-                self._pending = self._pending[idx + len("</think>"):]
-                self._in_think = False
+                self.pending = self.pending[end + 8:]
+                self.in_think = False
                 continue
-
-            open_idx = self._pending.find("<think>")
-            if open_idx != -1:
-                out_parts.append(self._pending[:open_idx])
-                self._pending = self._pending[open_idx + len("<think>"):]
-                self._in_think = True
+            start = self.pending.find("<think>")
+            if start >= 0:
+                output.append(self.pending[:start])
+                self.pending = self.pending[start + 7:]
+                self.in_think = True
                 continue
-
-            # No confirmed "<think>" yet - but the buffered tail might be
-            # the start of one, so hold it back until we're sure.
-            max_prefix = min(len(self._pending), len("<think>") - 1)
             hold = 0
-            for n in range(max_prefix, 0, -1):
-                if "<think>".startswith(self._pending[-n:]):
+            for n in range(min(len(self.pending), 6), 0, -1):
+                if "<think>".startswith(self.pending[-n:]):
                     hold = n
                     break
-            safe_len = len(self._pending) - hold
-            out_parts.append(self._pending[:safe_len])
-            self._pending = self._pending[safe_len:]
+            safe = len(self.pending) - hold
+            output.append(self.pending[:safe])
+            self.pending = self.pending[safe:]
             break
-        return "".join(out_parts)
+        return "".join(output)
 
     def feed(self, piece: str) -> str:
-        """Feed one incoming text delta, return the portion safe to show."""
         cleaned = self._strip_think(piece)
-        if self._label_checked:
+        if self.label_checked:
             return cleaned
-        if not cleaned:
+        self.label_buf += cleaned
+        if len(self.label_buf) < 24:
             return ""
-        self._label_buf += cleaned
-        if len(self._label_buf) < self._LABEL_HOLD:
-            return ""  # still undecided, keep holding
-        self._label_checked = True
-        return _LEADING_LABEL_RE.sub("", self._label_buf, count=1)
+        self.label_checked = True
+        return _LEADING_LABEL_RE.sub("", self.label_buf, count=1)
 
     def flush(self) -> str:
-        """Call once after the stream ends to release any held-back text."""
-        tail = "" if self._in_think else self._pending
-        self._pending = ""
-        if not self._label_checked:
-            self._label_checked = True
-            return _LEADING_LABEL_RE.sub("", self._label_buf + tail, count=1)
+        tail = "" if self.in_think else self.pending
+        self.pending = ""
+        if not self.label_checked:
+            self.label_checked = True
+            return _LEADING_LABEL_RE.sub("", self.label_buf + tail, count=1)
         return tail
 
 
-# --------------------------------------------------------------------------- #
-# Client
-# --------------------------------------------------------------------------- #
+# Provider IDs and default model names are kept here so the .env can override
+# them without changing bot code. Gemini's OpenAI-compatible REST API is used.
+_PROVIDER_DEFAULTS = {
+    "groq": ("https://api.groq.com/openai/v1", "openai/gpt-oss-20b", "GROQ_API_KEY"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.5-flash-lite", "GEMINI_API_KEY"),
+}
+
 
 class _Completions:
-    def __init__(self, client: "AsyncOllama") -> None:
-        self._client = client
+    def __init__(self, client: "AsyncAIClient") -> None:
+        self.client = client
 
-    async def create(
-        self,
-        *,
-        messages: Sequence[dict],
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        top_p: Optional[float] = None,
-        stop: Optional[Iterable[str]] = None,
-        stream: bool = False,
-        **_ignored: Any,
-    ) -> ChatCompletion:
-        if stream:
-            # The bot only processes the completed response anyway.
-            logger.debug("ai_client: stream=True is ignored (always stream=False).")
-        return await self._client._chat_completion(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            stop=stop,
-        )
+    async def create(self, *, messages: Sequence[dict], model: Optional[str] = None,
+                     temperature: Optional[float] = None, max_tokens: Optional[int] = None,
+                     top_p: Optional[float] = None, stop: Optional[Iterable[str]] = None,
+                     stream: bool = False, **_ignored: Any) -> ChatCompletion:
+        return await self.client._completion(messages, model, temperature, max_tokens, top_p, stop)
 
 
 class _Chat:
-    def __init__(self, client: "AsyncOllama") -> None:
+    def __init__(self, client: "AsyncAIClient") -> None:
         self.completions = _Completions(client)
 
 
-class AsyncOllama:
-    """Asynchronous client for an Ollama instance (direct or via gateway)."""
-
-    def __init__(
-        self,
-        base_url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        timeout: Optional[float] = None,
-        connect_timeout: Optional[float] = None,
-        max_retries: Optional[int] = None,
-        max_concurrency: Optional[int] = None,
-        keep_alive: Optional[str] = None,
-        num_ctx: Optional[int] = None,
-    ) -> None:
-        raw_base = (base_url or _env_str("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
-        self.base_url = raw_base
-        self.api_key = api_key if api_key is not None else _env_str("OLLAMA_API_KEY", "")
-        self.model = model or _env_str("OLLAMA_MODEL", "pparikh2/phi3.5Q4_K_M")
-        self.timeout = timeout if timeout is not None else _env_float("OLLAMA_TIMEOUT_SECONDS", 120.0)
-        self.connect_timeout = (
-            connect_timeout if connect_timeout is not None else _env_float("OLLAMA_CONNECT_TIMEOUT", 10.0)
-        )
-        self.max_retries = max_retries if max_retries is not None else _env_int("OLLAMA_MAX_RETRIES", 2)
-        self.keep_alive = keep_alive or _env_str("OLLAMA_KEEP_ALIVE", "30m")
-        self.num_ctx = num_ctx if num_ctx is not None else _env_int("OLLAMA_NUM_CTX", 8192)
-
-        concurrency = max_concurrency if max_concurrency is not None else _env_int("OLLAMA_MAX_CONCURRENCY", 1)
-        self.max_concurrency = max(1, concurrency)
-
-        # Determine the endpoint: native Ollama API or OpenAI-compatible route.
-        if self.base_url.endswith("/v1"):
-            self._style = "openai"
-            self._endpoint = f"{self.base_url}/chat/completions"
-        else:
-            self._style = "native"
-            self._endpoint = f"{self.base_url}/api/chat"
-
+class AsyncAIClient:
+    """Small async client exposing the chat.completions shape used by the cogs."""
+    def __init__(self) -> None:
+        self.primary = _env("AI_PROVIDER", "groq").lower()
+        self.fallback = _env("AI_FALLBACK_PROVIDER", "gemini").lower()
+        self.timeout = float(_env("AI_TIMEOUT_SECONDS", "45"))
+        self.max_concurrency = max(1, int(_env("AI_MAX_CONCURRENCY", "8")))
+        self._semaphore = asyncio.Semaphore(self.max_concurrency)
         self._session: Optional[aiohttp.ClientSession] = None
         self._session_lock = asyncio.Lock()
-        self._semaphore = asyncio.Semaphore(self.max_concurrency)
-
         self.chat = _Chat(self)
+        self.providers = self._configured_providers()
+        self.model = self.providers[0]["model"] if self.providers else _env("AI_MODEL", "openai/gpt-oss-20b")
+        logger.info("AI providers ready: %s", " -> ".join(p["name"] for p in self.providers) or "none")
 
-        logger.info(
-            "ai_client: Ollama backend %s (style=%s, model=%s, timeout=%.1fs, concurrency=%d, auth=%s)",
-            self.base_url, self._style, self.model, self.timeout,
-            self.max_concurrency, "yes" if self.api_key else "no",
-        )
-
-    # -- internal helpers -------------------------------------------------- #
-
-    @property
-    def _headers(self) -> dict:
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
+    def _configured_providers(self) -> list[dict[str, str]]:
+        configured = []
+        for name in dict.fromkeys((self.primary, self.fallback)):
+            if name not in _PROVIDER_DEFAULTS:
+                logger.warning("Unknown AI provider %r; supported providers: %s", name, ", ".join(_PROVIDER_DEFAULTS))
+                continue
+            base_url, default_model, key_name = _PROVIDER_DEFAULTS[name]
+            key = _env(key_name)
+            if not key:
+                continue
+            provider_model = _env(f"{name.upper()}_MODEL", default_model)
+            if name == self.primary:
+                provider_model = _env("AI_MODEL", provider_model)
+            configured.append({"name": name, "url": _env(f"{name.upper()}_BASE_URL", base_url).rstrip("/"),
+                               "model": provider_model, "key": key})
+        if not configured:
+            logger.warning("No AI provider configured. Add GROQ_API_KEY and/or GEMINI_API_KEY to .env.")
+        elif configured[0]["name"] != self.primary:
+            logger.warning("Primary provider %s is not configured; using %s", self.primary, configured[0]["name"])
+        return configured
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is not None and not self._session.closed:
-            return self._session
-        async with self._session_lock:
-            if self._session is None or self._session.closed:
-                timeout = aiohttp.ClientTimeout(
-                    total=self.timeout,
-                    connect=self.connect_timeout,
-                    sock_connect=self.connect_timeout,
-                )
-                self._session = aiohttp.ClientSession(timeout=timeout)
+        if self._session is None or self._session.closed:
+            async with self._session_lock:
+                if self._session is None or self._session.closed:
+                    self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout))
         return self._session
 
-    def _build_payload(
-        self,
-        *,
-        messages: Sequence[dict],
-        model: str,
-        temperature: Optional[float],
-        max_tokens: Optional[int],
-        top_p: Optional[float],
-        stop: Optional[Iterable[str]],
-    ) -> dict:
-        normalized = [
-            {"role": str(m.get("role", "user")), "content": str(m.get("content", ""))}
-            for m in messages
-            if m and m.get("content") is not None
-        ]
-
-        if self._style == "openai":
-            payload: dict[str, Any] = {
-                "model": model,
-                "messages": normalized,
-                "stream": False,
-            }
-            if temperature is not None:
-                payload["temperature"] = float(temperature)
-            if max_tokens:
-                payload["max_tokens"] = int(max_tokens)
-            if top_p is not None:
-                payload["top_p"] = float(top_p)
-            if stop:
-                payload["stop"] = [stop] if isinstance(stop, str) else list(stop)
-            return payload
-
-        options: dict[str, Any] = {"num_ctx": int(self.num_ctx)}
-        if temperature is not None:
-            options["temperature"] = float(temperature)
-        if max_tokens:
-            # OpenAI "max_tokens" is called "num_predict" by Ollama.
-            options["num_predict"] = int(max_tokens)
-        if top_p is not None:
-            options["top_p"] = float(top_p)
-        if stop:
-            options["stop"] = [stop] if isinstance(stop, str) else list(stop)
-
-        return {
-            "model": model,
-            "messages": normalized,
-            "stream": False,
-            "keep_alive": self.keep_alive,
-            "options": options,
+    @staticmethod
+    def _payload(provider: dict[str, str], messages: Sequence[dict], model: Optional[str],
+                 temperature: Optional[float], max_tokens: Optional[int], top_p: Optional[float],
+                 stop: Optional[Iterable[str]], stream: bool = False) -> dict:
+        # Provider-specific fallback uses that provider's model, unless the caller
+        # explicitly selected a model other than the configured primary default.
+        requested = model
+        if requested and requested != _env("AI_MODEL", _PROVIDER_DEFAULTS.get(_env("AI_PROVIDER", "groq").lower(), ("", "", ""))[1]):
+            chosen_model = requested
+        else:
+            chosen_model = provider["model"]
+        payload: dict[str, Any] = {
+            "model": chosen_model,
+            "messages": [{"role": str(m.get("role", "user")), "content": str(m.get("content", ""))}
+                         for m in messages if m and m.get("content") is not None],
+            "stream": stream,
         }
+        if temperature is not None:
+            payload["temperature"] = float(temperature)
+        if max_tokens:
+            payload["max_tokens"] = int(max_tokens)
+        if top_p is not None:
+            payload["top_p"] = float(top_p)
+        if stop:
+            payload["stop"] = [stop] if isinstance(stop, str) else list(stop)
+        return payload
 
-    def _parse_response(self, data: dict, model: str, latency_ms: int) -> ChatCompletion:
-        if "choices" in data:  # OpenAI format
-            first = (data.get("choices") or [{}])[0]
-            content = ((first.get("message") or {}).get("content")) or ""
-            finish_reason = first.get("finish_reason") or "stop"
-            usage_raw = data.get("usage") or {}
-            usage = Usage(
-                prompt_tokens=int(usage_raw.get("prompt_tokens") or 0),
-                completion_tokens=int(usage_raw.get("completion_tokens") or 0),
-                total_tokens=int(usage_raw.get("total_tokens") or 0),
-            )
-        else:  # Native Ollama format
-            content = ((data.get("message") or {}).get("content")) or data.get("response") or ""
-            finish_reason = data.get("done_reason") or "stop"
-            prompt_tokens = int(data.get("prompt_eval_count") or 0)
-            completion_tokens = int(data.get("eval_count") or 0)
-            usage = Usage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=prompt_tokens + completion_tokens,
-            )
+    @staticmethod
+    def _headers(provider: dict[str, str]) -> dict[str, str]:
+        return {"Authorization": f"Bearer {provider['key']}", "Content-Type": "application/json"}
 
-        if not usage.total_tokens:
-            usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
-
-        content = sanitize_model_output(content)
-        if not content:
-            raise AIClientError("The local model returned an empty response.")
-
-        return ChatCompletion(
-            id=f"ollama-{uuid.uuid4().hex[:16]}",
-            model=data.get("model") or model,
-            choices=[Choice(message=Message(role="assistant", content=content), finish_reason=finish_reason)],
-            usage=usage,
-            created=int(time.time()),
-            latency_ms=latency_ms,
-            raw=data,
-        )
-
-    # -- public API -------------------------------------------------------- #
-
-    async def _chat_completion(
-        self,
-        *,
-        messages: Sequence[dict],
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        top_p: Optional[float] = None,
-        stop: Optional[Iterable[str]] = None,
-    ) -> ChatCompletion:
-        target_model = model or self.model
-        payload = self._build_payload(
-            messages=messages,
-            model=target_model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            stop=stop,
-        )
-
-        last_error: Optional[str] = None
-
-        for attempt in range(self.max_retries + 1):
-            try:
-                session = await self._get_session()
-                started = time.perf_counter()
-
-                # Only one request at a time: a local model cannot parallelize
-                # meaningfully and would otherwise overload the queue.
-                async with self._semaphore:
-                    async with session.post(self._endpoint, json=payload, headers=self._headers) as resp:
-                        body = await resp.text()
-
-                        if resp.status >= 400:
-                            snippet = body[:400].replace("\n", " ")
-                            if resp.status in (401, 403):
-                                raise AIClientError(
-                                    f"Gateway rejected the request (HTTP {resp.status}). "
-                                    f"Is OLLAMA_API_KEY correct? Response: {snippet}"
-                                )
-                            if resp.status == 404:
-                                raise AIClientError(
-                                    f"Model or endpoint not found (HTTP 404). "
-                                    f"Is '{target_model}' installed on the local machine? "
-                                    f"Response: {snippet}"
-                                )
-                            if resp.status in _RETRYABLE_STATUS:
-                                last_error = f"HTTP {resp.status}: {snippet}"
-                                raise aiohttp.ClientResponseError(
-                                    resp.request_info, resp.history,
-                                    status=resp.status, message=snippet,
-                                )
-                            raise AIClientError(f"Ollama HTTP {resp.status}: {snippet}")
-
-                        try:
-                            data = json.loads(body)
-                        except json.JSONDecodeError as exc:
-                            raise AIClientError(
-                                f"Invalid JSON response from the backend: {body[:200]}"
-                            ) from exc
-
-                latency_ms = int((time.perf_counter() - started) * 1000)
-                completion = self._parse_response(data, target_model, latency_ms)
-                logger.debug(
-                    "ai_client: ok model=%s latency_ms=%d tokens=%d",
-                    completion.model, latency_ms, completion.usage.total_tokens,
-                )
-                return completion
-
-            except AIClientError:
-                raise
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-                last_error = last_error or f"{type(exc).__name__}: {exc}"
-                if attempt < self.max_retries:
-                    delay = 1.5 * (attempt + 1)
-                    logger.warning(
-                        "ai_client: attempt %d/%d failed (%s), retrying in %.1fs",
-                        attempt + 1, self.max_retries + 1, last_error, delay,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                raise AIClientError(
-                    f"Local AI backend is unreachable ({self.base_url}): {last_error}"
-                ) from exc
-
-        raise AIClientError(f"Local AI backend is unreachable ({self.base_url}): {last_error}")
-
-    async def stream_chat(
-        self,
-        *,
-        messages: Sequence[dict],
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        top_p: Optional[float] = None,
-        stop: Optional[Iterable[str]] = None,
-        usage_sink: Optional[dict] = None,
-    ):
-        """Yield text deltas as they arrive from the model (async generator).
-
-        If ``usage_sink`` is given, it is filled in-place with
-        ``prompt_tokens`` / ``completion_tokens`` / ``total_tokens`` once the
-        backend reports them (native Ollama sends these on its final
-        ``done: true`` message; the OpenAI-compatible route usually does not
-        during streaming, so the dict may stay empty in that mode).
-
-        Works against both the native Ollama streaming format (newline-
-        delimited JSON objects) and the OpenAI-compatible SSE format
-        (``data: {...}`` lines), matching whichever style ``OLLAMA_BASE_URL``
-        was configured for. Only one request runs at a time, same as
-        ``_chat_completion`` (see ``OLLAMA_MAX_CONCURRENCY``).
-
-        Retries are not applied here: a stream that fails midway has already
-        shown the user partial text, so silently retrying would duplicate or
-        contradict what they've seen. Callers should catch ``AIClientError``
-        and decide how to surface a partial answer.
-        """
-        target_model = model or self.model
-        payload = self._build_payload(
-            messages=messages, model=target_model, temperature=temperature,
-            max_tokens=max_tokens, top_p=top_p, stop=stop,
-        )
-        payload["stream"] = True
-
+    async def _completion(self, messages: Sequence[dict], model: Optional[str], temperature: Optional[float],
+                          max_tokens: Optional[int], top_p: Optional[float], stop: Optional[Iterable[str]]) -> ChatCompletion:
+        if not self.providers:
+            raise AIClientError("AI is not configured. Add a provider API key to the bot .env file.")
+        errors = []
         session = await self._get_session()
-        stream_filter = _StreamFilter()
-        got_any_content = False
-
-        async with self._semaphore:
+        for provider in self.providers:
+            payload = self._payload(provider, messages, model, temperature, max_tokens, top_p, stop)
+            started = time.perf_counter()
             try:
-                async with session.post(self._endpoint, json=payload, headers=self._headers) as resp:
-                    if resp.status >= 400:
-                        body = await resp.text()
-                        snippet = body[:400].replace("\n", " ")
-                        raise AIClientError(f"Ollama HTTP {resp.status}: {snippet}")
+                async with self._semaphore, session.post(provider["url"] + "/chat/completions", json=payload,
+                                                          headers=self._headers(provider)) as response:
+                    body = await response.text()
+                    if response.status >= 400:
+                        errors.append(f"{provider['name']} HTTP {response.status}: {body[:240]}")
+                        logger.warning("AI provider %s returned HTTP %d; trying fallback", provider["name"], response.status)
+                        continue
+                    data = json.loads(body)
+                first = (data.get("choices") or [{}])[0]
+                content = sanitize_model_output(((first.get("message") or {}).get("content")) or "")
+                if not content:
+                    errors.append(f"{provider['name']} returned an empty response")
+                    continue
+                usage_raw = data.get("usage") or {}
+                usage = Usage(int(usage_raw.get("prompt_tokens") or 0), int(usage_raw.get("completion_tokens") or 0),
+                              int(usage_raw.get("total_tokens") or 0))
+                if not usage.total_tokens:
+                    usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
+                return ChatCompletion(str(data.get("id") or uuid.uuid4().hex), str(data.get("model") or payload["model"]),
+                                      [Choice(Message(content=content), finish_reason=first.get("finish_reason") or "stop")],
+                                      usage, int(data.get("created") or time.time()),
+                                      int((time.perf_counter() - started) * 1000), data)
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError) as exc:
+                errors.append(f"{provider['name']} {type(exc).__name__}: {exc}")
+                logger.warning("AI provider %s failed (%s); trying fallback", provider["name"], exc)
+        raise AIClientError("All AI providers failed: " + "; ".join(errors))
 
-                    async for raw_line in resp.content:
+    async def stream_chat(self, *, messages: Sequence[dict], model: Optional[str] = None,
+                          temperature: Optional[float] = None, max_tokens: Optional[int] = None,
+                          top_p: Optional[float] = None, stop: Optional[Iterable[str]] = None,
+                          usage_sink: Optional[dict] = None):
+        if not self.providers:
+            raise AIClientError("AI is not configured. Add a provider API key to the bot .env file.")
+        session = await self._get_session()
+        errors = []
+        for provider in self.providers:
+            payload = self._payload(provider, messages, model, temperature, max_tokens, top_p, stop, stream=True)
+            filt = _StreamFilter()
+            yielded = False
+            try:
+                async with self._semaphore, session.post(provider["url"] + "/chat/completions", json=payload,
+                                                          headers=self._headers(provider)) as response:
+                    if response.status >= 400:
+                        body = await response.text()
+                        errors.append(f"{provider['name']} HTTP {response.status}: {body[:240]}")
+                        logger.warning("AI streaming provider %s returned HTTP %d; trying fallback", provider["name"], response.status)
+                        continue
+                    async for raw_line in response.content:
                         line = raw_line.decode("utf-8", errors="ignore").strip()
-                        if not line:
+                        if not line.startswith("data:"):
                             continue
-                        if line.startswith("data:"):  # OpenAI-compatible SSE
-                            line = line[len("data:"):].strip()
-                            if line == "[DONE]":
-                                break
+                        line = line[5:].strip()
+                        if line == "[DONE]":
+                            break
                         try:
-                            obj = json.loads(line)
+                            item = json.loads(line)
                         except json.JSONDecodeError:
                             continue
-
-                        if "choices" in obj:  # OpenAI format
-                            choice = (obj.get("choices") or [{}])[0]
-                            piece = (choice.get("delta") or {}).get("content") or ""
-                            done = bool(choice.get("finish_reason"))
-                        else:  # native Ollama format
-                            piece = ((obj.get("message") or {}).get("content")) or ""
-                            done = bool(obj.get("done"))
-                            if done and usage_sink is not None:
-                                prompt_tokens = int(obj.get("prompt_eval_count") or 0)
-                                completion_tokens = int(obj.get("eval_count") or 0)
-                                usage_sink["prompt_tokens"] = prompt_tokens
-                                usage_sink["completion_tokens"] = completion_tokens
-                                usage_sink["total_tokens"] = prompt_tokens + completion_tokens
-
+                        choices = item.get("choices") or [{}]
+                        piece = ((choices[0].get("delta") or {}).get("content")) or ""
                         if piece:
-                            visible = stream_filter.feed(piece)
+                            visible = filt.feed(piece)
                             if visible:
-                                got_any_content = True
+                                yielded = True
                                 yield visible
-                        if done:
-                            break
-            except aiohttp.ClientError as exc:
-                raise AIClientError(
-                    f"Local AI backend is unreachable ({self.base_url}): {exc}"
-                ) from exc
-
-        tail = stream_filter.flush()
-        if tail:
-            got_any_content = True
-            yield tail
-
-        if not got_any_content:
-            raise AIClientError("The local model returned an empty response.")
-
-    async def list_models(self) -> list[str]:
-        """Return the names of installed models (for health checks)."""
-        base = self.base_url[:-3].rstrip("/") if self.base_url.endswith("/v1") else self.base_url
-        session = await self._get_session()
-        async with session.get(f"{base}/api/tags", headers=self._headers) as resp:
-            if resp.status >= 400:
-                raise AIClientError(f"/api/tags returned HTTP {resp.status}")
-            data = await resp.json()
-        return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
-
-    async def warmup(self, model: Optional[str] = None) -> bool:
-        """Preload the model into memory. Errors are not fatal."""
-        target = model or self.model
-        try:
-            completion = await self._chat_completion(
-                messages=[{"role": "user", "content": "ping"}],
-                model=target,
-                temperature=0.0,
-                max_tokens=1,
-            )
-            logger.info("ai_client: Warmup ok (model=%s, %dms)", target, completion.latency_ms)
-            return True
-        except Exception as exc:  # noqa: BLE001 - Warmup must never stop the bot
-            logger.warning("ai_client: warmup failed (%s): %s", target, exc)
-            return False
+                        usage = item.get("usage")
+                        if usage and usage_sink is not None:
+                            prompt = int(usage.get("prompt_tokens") or 0)
+                            completion = int(usage.get("completion_tokens") or 0)
+                            usage_sink.update(prompt_tokens=prompt, completion_tokens=completion,
+                                              total_tokens=int(usage.get("total_tokens") or prompt + completion))
+                tail = filt.flush()
+                if tail:
+                    yielded = True
+                    yield tail
+                if yielded:
+                    return
+                errors.append(f"{provider['name']} returned an empty response")
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError) as exc:
+                errors.append(f"{provider['name']} {type(exc).__name__}: {exc}")
+                if yielded:
+                    raise AIClientError(f"{provider['name']} stream failed after partial output: {exc}") from exc
+                logger.warning("AI streaming provider %s failed (%s); trying fallback", provider["name"], exc)
+        raise AIClientError("All AI providers failed: " + "; ".join(errors))
 
     async def close(self) -> None:
         if self._session is not None and not self._session.closed:
@@ -664,28 +333,18 @@ class AsyncOllama:
         self._session = None
 
 
-# --------------------------------------------------------------------------- #
-# Shared instance
-# --------------------------------------------------------------------------- #
-
-_shared_client: Optional[AsyncOllama] = None
+_shared_client: Optional[AsyncAIClient] = None
 
 
-def get_ai_client() -> AsyncOllama:
-    """Return the client shared across the process.
-
-    All cogs share a session and a concurrency limit so the local machine is
-    not overwhelmed by multiple cogs at once.
-    """
+def get_ai_client() -> AsyncAIClient:
     global _shared_client
     if _shared_client is None:
-        _shared_client = AsyncOllama()
+        _shared_client = AsyncAIClient()
     return _shared_client
 
 
 def is_configured() -> bool:
-    """Return True if OLLAMA_BASE_URL is set in .env."""
-    return bool(_env_str("OLLAMA_BASE_URL", ""))
+    return bool(_env("GROQ_API_KEY") or _env("GEMINI_API_KEY"))
 
 
 async def close_ai_client() -> None:

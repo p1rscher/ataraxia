@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 class AICog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Local Ollama backend instead of Groq (see core/ai_client.py)
+        # Shared Groq client with automatic Gemini fallback.
         self.client = get_ai_client()
         self.ai_model = self.client.model
         self.user_cooldowns = defaultdict(lambda: 0)
@@ -60,25 +60,25 @@ class AICog(commands.Cog):
         # Premium tier settings
         self.tier_settings = {
             'free': {
-                'cooldown': 90,
+                'cooldown': 30,
                 'max_tokens': 500,
-                'daily_limit': 20,
-                'burst_limit': None,    # ✅ No burst protection (90s cooldown is enough)
+                'daily_limit': 1000,
+                'burst_limit': None,    # API provider quota is shared by the bot
                 'burst_window': None,
                 'emoji': '🆓'
             },
             'premium': {
-                'cooldown': 30,
+                'cooldown': 10,
                 'max_tokens': 1000,
-                'daily_limit': 100,
+                'daily_limit': 1000,
                 'burst_limit': None,      # ✅ No burst protection
                 'burst_window': None,
                 'emoji': '💎'
             },
             'premium_plus': {
-                'cooldown': 10,
+                'cooldown': 3,
                 'max_tokens': 2000,
-                'daily_limit': 500,
+                'daily_limit': 1000,
                 'burst_limit': None,      # ✅ No burst protection
                 'burst_window': None,
                 'emoji': '👑'
@@ -161,8 +161,8 @@ class AICog(commands.Cog):
             if tier == 'free':
                 next_tier_msg = (
                     f"\n\n💎 **Need more requests?**\n"
-                    f"Premium: 100/day (30s cooldown)\n"
-                    f"Premium+: 500/day (10s cooldown)\n"
+                    f"Premium: 1,000/day (2s cooldown)\n"
+                    f"Premium+: 1,000/day (2s cooldown)\n"
                     f"Use `/premium` to upgrade!"
                 )
             elif tier == 'premium':
@@ -187,12 +187,11 @@ class AICog(commands.Cog):
             if tier == 'free':
                 upgrade_msg = (
                     f"\n\n💡 **Upgrade for faster AI:**\n"
-                    f"💎 Premium: 30s cooldown, 100/day\n"
-                    f"👑 Premium+: 10s cooldown, 500/day\n"
-                    f"Use `/premium` to learn more!"
+                    f"Provider limits are shared across all AI users.\n"
+                    f"Use `/aistatus` to check your current usage."
                 )
             elif tier == 'premium':
-                upgrade_msg = f"\n\n👑 **Upgrade to Premium+** for 10s cooldown!"
+                upgrade_msg = ""
             
             await ctx.send(
                 f"⏳ Please wait **{remaining}s** before asking again!\n"
@@ -351,7 +350,7 @@ class AICog(commands.Cog):
             logger.error(f"AI backend unreachable for user {user_id}: {e}", exc_info=True)
             await ctx.send(
                 "❌ The AI backend is currently unreachable.\n"
-                "The self-hosted model might be offline - please try again in a moment!",
+                "Please try again in a moment!",
                 ephemeral=True
             )
         except Exception as e:
@@ -434,20 +433,12 @@ class AICog(commands.Cog):
                 inline=True
             )
         
-        if tier != 'premium_plus':
-            upgrade_options = []
-            if tier == 'free':
-                upgrade_options.append("💎 **Premium**: 30s cooldown, 100/day, burst protection")
-                upgrade_options.append("👑 **Premium+**: 10s cooldown, 500/day, faster burst limit")
-            elif tier == 'premium':
-                upgrade_options.append("👑 **Premium+**: 10s cooldown, 500/day, 50 req/10min")
-            
-            embed.add_field(
-                name="✨ Upgrade Available",
-                value="\n".join(upgrade_options) + f"\n\nUse `/premium` to learn more!",
-                inline=False
-            )
-        
+        embed.add_field(
+            name="🌐 Provider quota",
+            value="Shared across bot users; actual per-minute and daily caps are set by the AI providers.",
+            inline=False
+        )
+
         # Add reset time
         reset_time = self._time_until_midnight()
         embed.add_field(
@@ -506,7 +497,7 @@ class AICog(commands.Cog):
                 embed.add_field(name="Max Daily Limit", value=f"${self.max_daily_cost:.2f}")
                 embed.add_field(
                     name="Note",
-                    value="Running on a self-hosted Ollama model (no API costs). This is a reference figure only.",
+                    value="This is an estimate based on the configured API provider.",
                     inline=False
                 )
                 

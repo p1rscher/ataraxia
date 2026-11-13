@@ -28,21 +28,23 @@ except Exception as e:
 class TranslatorCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Local Ollama backend instead of Groq (see core/ai_client.py)
+        # Shared Groq client with automatic Gemini fallback.
         self.client = get_ai_client() if ai_is_configured() else None
-        self.ai_model = os.getenv('TRANSLATOR_AI_MODEL') or os.getenv('OLLAMA_MODEL', 'pparikh2/phi3.5Q4_K_M')
+        self.ai_model = os.getenv('TRANSLATOR_AI_MODEL') or os.getenv('AI_MODEL') or (self.client.model if self.client else 'openai/gpt-oss-20b')
         self.daily_ai_translations = defaultdict(lambda: {'count': 0, 'date': None})
+        # Provider quotas are shared bot-wide, so each user may access the
+        # free plan allowance until the provider's org-wide quota is exhausted.
         self.tier_settings = {
-            'free': 30,
-            'premium': 70,
-            'premium_plus': 100
+            'free': 1000,
+            'premium': 1000,
+            'premium_plus': 1000
         }
 
     @commands.hybrid_command(name="tr", description="Translate a message")
     @app_commands.describe(
         original_language="Optional original language code (e.g. en, fr, de)",
         destination_language="Optional destination language code",
-        ai_powered="Enable AI-powered translation using the self-hosted model (limited daily uses)",
+        ai_powered="Enable AI-powered translation using the configured AI API (provider quota applies)",
         text="The text to translate. (Optional if replying to a message)"
     )
     @app_commands.choices(ai_powered=[
@@ -121,7 +123,7 @@ class TranslatorCog(commands.Cog):
         # Check AI Limits
         if use_ai:
             if not getattr(self, 'client', None):
-                await ctx.send("❌ AI translation is not configured (OLLAMA_BASE_URL missing).", ephemeral=True)
+                await ctx.send("❌ AI translation is not configured (add GROQ_API_KEY or GEMINI_API_KEY to .env).", ephemeral=True)
                 return
 
             user_id = ctx.author.id

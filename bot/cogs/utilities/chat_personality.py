@@ -83,7 +83,7 @@ class ChatPersonalityCog(commands.Cog):
         # Runtime tuning via env vars
         # Local models take significantly longer than a cloud API -> higher default.
         self._ai_timeout_seconds = float(os.getenv("CHATPERSONA_AI_TIMEOUT_SECONDS", "45.0"))
-        self._ai_model = os.getenv("CHATPERSONA_AI_MODEL") or os.getenv("OLLAMA_MODEL", "pparikh2/phi3.5Q4_K_M")
+        self._ai_model = os.getenv("CHATPERSONA_AI_MODEL") or os.getenv("AI_MODEL") or get_ai_client().model
         self._ai_temperature = float(os.getenv("CHATPERSONA_AI_TEMPERATURE", "0.95"))
         self._ai_max_tokens = int(os.getenv("CHATPERSONA_AI_MAX_TOKENS", "90"))
         self._trace_enabled = os.getenv("CHATPERSONA_TRACE", "1").strip().lower() in {"1", "true", "yes", "on"}
@@ -94,11 +94,11 @@ class ChatPersonalityCog(commands.Cog):
         if ai_is_configured():
             self._ai_client = get_ai_client()
             logger.info(
-                "ChatPersonality: Ollama client initialized (model=%s, timeout=%.1fs, refine=%s)",
+                "ChatPersonality: API client initialized (model=%s, timeout=%.1fs, refine=%s)",
                 self._ai_model, self._ai_timeout_seconds, self._ai_refine_enabled,
             )
         else:
-            logger.warning("ChatPersonality: OLLAMA_BASE_URL missing, AI filler disabled.")
+            logger.warning("ChatPersonality: No GROQ_API_KEY or GEMINI_API_KEY; AI filler disabled.")
 
     @commands.hybrid_group(
         name="chatpersona",
@@ -160,7 +160,7 @@ class ChatPersonalityCog(commands.Cog):
         embed.add_field(name="AI model", value=self._ai_model, inline=True)
         embed.add_field(
             name="AI backend",
-            value="Ollama (self-hosted)" if self._ai_client is not None else "not configured",
+            value="Groq with Gemini fallback" if self._ai_client is not None else "not configured",
             inline=True,
         )
         embed.add_field(name="AI timeout", value=f"{self._ai_timeout_seconds:.1f}s", inline=True)
@@ -437,7 +437,7 @@ class ChatPersonalityCog(commands.Cog):
 
         msg = "✅ AI settings updated."
         if enabled and self._ai_client is None:
-            msg += "\n⚠️ OLLAMA_BASE_URL is missing from .env, so AI is effectively disabled."
+            msg += "\n⚠️ GROQ_API_KEY and GEMINI_API_KEY are missing from .env, so AI is effectively disabled."
         await ctx.send(msg, ephemeral=True)
 
     @chatpersona_group.command(name="resetlearning", description="Delete learned words/emojis/gifs/stickers")
