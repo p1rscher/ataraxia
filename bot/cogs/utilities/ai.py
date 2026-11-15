@@ -62,7 +62,7 @@ class AICog(commands.Cog):
             'free': {
                 'cooldown': 30,
                 'max_tokens': 500,
-                'daily_limit': 1000,
+                'daily_limit': 50,
                 'burst_limit': None,    # API provider quota is shared by the bot
                 'burst_window': None,
                 'emoji': '🆓'
@@ -70,7 +70,7 @@ class AICog(commands.Cog):
             'premium': {
                 'cooldown': 10,
                 'max_tokens': 1000,
-                'daily_limit': 1000,
+                'daily_limit': 100,
                 'burst_limit': None,      # ✅ No burst protection
                 'burst_window': None,
                 'emoji': '💎'
@@ -78,7 +78,7 @@ class AICog(commands.Cog):
             'premium_plus': {
                 'cooldown': 3,
                 'max_tokens': 2000,
-                'daily_limit': 1000,
+                'daily_limit': 500,
                 'burst_limit': None,      # ✅ No burst protection
                 'burst_window': None,
                 'emoji': '👑'
