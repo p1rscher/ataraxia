@@ -8,12 +8,12 @@ import urllib.parse
 import urllib.request
 
 import discord
-import emoji as emoji_lib
 from discord import app_commands
 from discord.ext import commands
 
 from core import database_pg as db
 from utils.embeds import get_guild_color
+from utils.emoji_parser import emoji_as_text, is_custom_emoji, parse_emoji, to_component_emoji
 
 logger = logging.getLogger(__name__)
 
@@ -29,38 +29,6 @@ async def _safe_send(inter, *args, **kwargs):
         else:
             return await inter.followup.send(*args, **kwargs)
     return await inter.send(*args, **kwargs)
-
-
-def sanitize_unicode_emoji(emoji_str: str) -> str:
-    """Passes emojis cleanly to discord API without stripping variation selectors."""
-    return emoji_str
-
-
-def normalize_emoji(raw_emoji: str) -> str:
-    value = raw_emoji.strip()
-    
-    # Discord-specific alias overrides
-    discord_aliases = {
-        ":tools:": "🛠️",
-        ":gear:": "⚙️",
-    }
-    if value.lower() in discord_aliases:
-        value = discord_aliases[value.lower()]
-    
-    # Support both :alias: and standard English shortcodes
-    try:
-        # First try standard English (e.g. :hammer_and_wrench:)
-        converted = emoji_lib.emojize(value)
-        if converted == value:
-            # Then try aliases (e.g. :megaphone:)
-            converted = emoji_lib.emojize(value, language="alias")
-        
-        if converted != value:
-            value = converted
-    except Exception:
-        pass
-
-    return sanitize_unicode_emoji(value)
 
 
 def normalize_image_url(raw_url: str) -> Optional[str]:
@@ -189,70 +157,57 @@ async def download_image_for_discord(url: str) -> tuple[Optional[discord.File], 
     return discord.File(io.BytesIO(data), filename=filename), None
 
 
-def format_emoji_for_option(emoji_value: str) -> Optional[str | discord.PartialEmoji]:
-    """Safe formatting for public buttons (only). In menus, we use labels."""
-    if not emoji_value:
-        return None
-    
-    # Custom Discord Emoji strings should be converted to PartialEmoji
-    if emoji_value.startswith('<') and emoji_value.endswith('>'):
-        try:
-            return discord.PartialEmoji.from_str(emoji_value)
-        except Exception:
-            return emoji_value
-            
-    # Standard Unicode emojis: Return the string character.
-    # We attempt to emojize here as well to fix any existing colon-codes in the database.
+def build_component_label_and_emoji(
+    label: str,
+    emoji_value: str,
+    emoji_in_label: bool = False,
+    guild: Optional[discord.Guild] = None,
+) -> tuple[str, Optional[str | discord.PartialEmoji]]:
+    """Return ``(label, emoji)`` for a button or select option.
+
+    With ``emoji_in_label`` the emoji is written into the label text instead of
+    the emoji field. That is the fallback for emojis Discord refuses in
+    components. Custom emojis cannot be rendered inside labels and are dropped.
+    A stored value that contains no emoji at all is shown as text.
+    """
+    safe_label = label or ""
+    component_emoji = to_component_emoji(emoji_value, guild)
+
+    if component_emoji is None:
+        leftover = (emoji_value or "").strip().strip(":<>")
+        return (safe_label or leftover), None
+
+    if not emoji_in_label:
+        return safe_label, component_emoji
+
+    if isinstance(component_emoji, str):
+        safe_label = f"{component_emoji} {safe_label}".strip()
+    elif not safe_label:
+        safe_label = component_emoji.name
+    return safe_label, None
+
+
+def is_emoji_rejection(exc: discord.HTTPException) -> bool:
+    """True if Discord rejected a payload because of an emoji it does not accept."""
+    return exc.code == 50035 and "emoji" in str(exc).lower()
+
+
+async def send_role_view(action, panel: dict, entries: list, guild: discord.Guild):
+    """Run ``action(view)`` and retry with emojis moved into the labels if Discord rejects them.
+
+    ``action`` is a coroutine function taking the view, e.g.
+    ``lambda view: message.edit(view=view)``.
+    """
     try:
-        # Discord-specific alias overrides
-        discord_aliases = {
-            ":tools:": "🛠️",
-            ":gear:": "⚙️",
-        }
-        test_val = emoji_value.lower()
-        if test_val in discord_aliases:
-            return sanitize_unicode_emoji(discord_aliases[test_val])
-
-        if emoji_value.startswith(':') and emoji_value.endswith(':'):
-            converted = emoji_lib.emojize(emoji_value, language="alias")
-            if converted == emoji_value:
-                converted = emoji_lib.emojize(emoji_value)
-            return sanitize_unicode_emoji(converted)
-    except Exception:
-        pass
-
-    return sanitize_unicode_emoji(emoji_value)
-
-
-def emoji_requires_label_fallback(component_emoji: Optional[str | discord.PartialEmoji]) -> bool:
-    """Return True for component emoji values Discord rejects, such as regional-indicator flag sequences."""
-    if not isinstance(component_emoji, str):
-        return False
-
-    return any(0x1F1E6 <= ord(char) <= 0x1F1FF for char in component_emoji)
-
-
-def build_component_label_and_emoji(label: str, emoji_value: str) -> tuple[str, Optional[str | discord.PartialEmoji]]:
-    """Return a `(label, emoji)` tuple, moving unsupported emoji values into the visible label text."""
-    formatted_emoji = format_emoji_for_option(emoji_value)
-    safe_label = label or ""
-
-    if emoji_requires_label_fallback(formatted_emoji):
-        emoji_text = normalize_emoji(emoji_value)
-        if emoji_text:
-            safe_label = f"{emoji_text} {safe_label}".strip()
-        return safe_label, None
-
-    return safe_label, formatted_emoji
-
-
-def build_select_option_label(label: str, emoji_value: str) -> str:
-    """Return a select-option label with emoji rendered as text to avoid Discord form-body failures."""
-    safe_label = label or ""
-    emoji_text = normalize_emoji(emoji_value)
-    if emoji_text:
-        safe_label = f"{emoji_text} {safe_label}".strip()
-    return safe_label
+        return await action(DynamicRoleView(panel, entries, guild))
+    except discord.HTTPException as exc:
+        if not is_emoji_rejection(exc):
+            raise
+        logger.warning(
+            "Discord rejected an emoji on reaction role panel %s, retrying with text labels: %s",
+            panel.get("message_id"), exc,
+        )
+        return await action(DynamicRoleView(panel, entries, guild, emoji_in_label=True))
 
 
 # ==========================================
@@ -307,7 +262,7 @@ async def update_member_roles(interaction: commands.Context, panel: dict, role_i
 
 
 class DynamicRoleButton(discord.ui.Button):
-    def __init__(self, panel: dict, entry: dict, guild: discord.Guild):
+    def __init__(self, panel: dict, entry: dict, guild: discord.Guild, emoji_in_label: bool = False):
         self.panel = panel
         self.entry = entry
         
@@ -317,11 +272,12 @@ class DynamicRoleButton(discord.ui.Button):
             count = len(role.members) if role else 0
             label = f"{label} | {count}" if label else str(count)
 
-        label, button_emoji = build_component_label_and_emoji(label, entry['emoji'])
+        label, button_emoji = build_component_label_and_emoji(label, entry['emoji'], emoji_in_label, guild)
 
         super().__init__(
             style=discord.ButtonStyle.primary,
-            label=label if label else "\u200b",
+            # A button needs a label or an emoji; never send it empty.
+            label=label[:80] if label else (None if button_emoji else "\u200b"),
             emoji=button_emoji,
             custom_id=f"rrbtn_{panel['message_id']}_{entry['role_id']}"
         )
@@ -345,7 +301,7 @@ class DynamicRoleButton(discord.ui.Button):
 
 
 class DynamicRoleSelect(discord.ui.Select):
-    def __init__(self, panel: dict, entries: list, guild: discord.Guild):
+    def __init__(self, panel: dict, entries: list, guild: discord.Guild, emoji_in_label: bool = False):
         self.panel = panel
         self.entries = entries
         
@@ -354,10 +310,11 @@ class DynamicRoleSelect(discord.ui.Select):
             role = guild.get_role(e['role_id']) if guild else None
             role_name = role.name if role else f"Role {e['role_id']}"
             label = e.get('label') or role_name
-            label = build_select_option_label(label, e['emoji'])
+            label, option_emoji = build_component_label_and_emoji(label, e['emoji'], emoji_in_label, guild)
             options.append(discord.SelectOption(
-                label=label[:100], 
+                label=label[:100],
                 value=str(e['role_id']),
+                emoji=option_emoji,
                 description=e.get('description')[:100] if e.get('description') else None
             ))
 
@@ -448,7 +405,7 @@ class DynamicRoleSelect(discord.ui.Select):
 
 
 class DynamicRoleView(discord.ui.View):
-    def __init__(self, panel: dict, entries: list, guild: discord.Guild):
+    def __init__(self, panel: dict, entries: list, guild: discord.Guild, emoji_in_label: bool = False):
         super().__init__(timeout=None)
         self.panel = panel
         self.entries = entries
@@ -456,17 +413,19 @@ class DynamicRoleView(discord.ui.View):
         
         comp_type = panel.get("component_type", "Buttons")
         if comp_type == "Select" and len(entries) > 0:
-            self.add_item(DynamicRoleSelect(panel, entries, guild))
+            self.add_item(DynamicRoleSelect(panel, entries, guild, emoji_in_label))
         else:
             for entry in entries:
-                self.add_item(DynamicRoleButton(panel, entry, guild))
+                self.add_item(DynamicRoleButton(panel, entry, guild, emoji_in_label))
 
     async def refresh_counters(self, interaction: commands.Context):
-        new_view = DynamicRoleView(self.panel, self.entries, self.guild)
         try:
-            await interaction.message.edit(view=new_view)
+            await send_role_view(
+                lambda view: interaction.message.edit(view=view),
+                self.panel, self.entries, self.guild,
+            )
         except Exception:
-            pass
+            logger.warning("Could not refresh role counters", exc_info=True)
 
 
 # ==========================================
@@ -519,7 +478,7 @@ class TextEditorModal(discord.ui.Modal, title="Edit Panel Output"):
 
 
 class SlotEditorModal(discord.ui.Modal, title="Edit/Add Role Slot"):
-    p_emoji = discord.ui.TextInput(label="Emoji", placeholder="😀 or <:custom:123456>", max_length=100)
+    p_emoji = discord.ui.TextInput(label="Emoji", placeholder="😀, :smile: or the :name: of a server emoji", max_length=100)
     p_label = discord.ui.TextInput(label="Label", placeholder="Optional Label", required=False, max_length=80)
     p_desc = discord.ui.TextInput(label="Description", placeholder="Only for Select Menus", required=False, max_length=100)
 
@@ -530,20 +489,16 @@ class SlotEditorModal(discord.ui.Modal, title="Edit/Add Role Slot"):
 
     async def on_submit(self, interaction: commands.Context):
         raw_emoji = str(self.p_emoji).strip()
-        emoji_str = normalize_emoji(raw_emoji)
-        
-        # Support raw discord emoji strings and global custom emoji search
-        if raw_emoji.startswith('<') and raw_emoji.endswith('>'):
-            emoji_str = raw_emoji
-        else:
-            search_name = raw_emoji.strip(":")
-            # Search across all emojis the bot knows about
-            custom_emoji = discord.utils.get(interaction.client.emojis, name=search_name)
-            if custom_emoji:
-                emoji_str = str(custom_emoji)
-                
+        emoji_str = parse_emoji(raw_emoji, interaction.guild, interaction.client)
+
         if not emoji_str:
-            await _safe_send(interaction, "Invalid emoji.", ephemeral=True)
+            await _safe_send(
+                interaction,
+                "I couldn't find an emoji in that input. Use a standard emoji (😀 or `:smile:`), "
+                "the name of a custom emoji from this server (`:name:`), or a full custom emoji "
+                "tag (`<:name:id>`).",
+                ephemeral=True,
+            )
             return
 
         await db.add_reaction_role_entry(
@@ -603,7 +558,7 @@ class DashboardEditorView(discord.ui.View):
         for e in self.entries:
             role_m = f"<@&{e['role_id']}>"
             lab = f" | {e['label']}" if e.get('label') else ""
-            slot_text.append(f"{e['emoji']}{lab} -> {role_m}")
+            slot_text.append(f"{emoji_as_text(e['emoji'])}{lab} -> {role_m}")
         emb.add_field(name="Slots Configured", value="\n".join(slot_text) if slot_text else "<Not Set>")
         
         req_role = self.panel.get('required_role_id')
@@ -626,7 +581,7 @@ class DashboardEditorView(discord.ui.View):
         if self.entries and self.panel.get('include_overview', False):
             desc += "\n\n**Roles:**\n"
             for e in self.entries:
-                desc += f"{e['emoji']} -> <@&{e['role_id']}>\n"
+                desc += f"{emoji_as_text(e['emoji'])} -> <@&{e['role_id']}>\n"
                 
         embed = discord.Embed(
             title=(self.panel.get('title') or None),
@@ -653,13 +608,15 @@ class DashboardEditorView(discord.ui.View):
             
         # Update ephemeral preview message if it exists
         if hasattr(self, 'preview_message') and self.preview_message:
-            view = DynamicRoleView(self.panel, self.entries, interaction.guild)
             preview_embed = await self._build_preview_embed()
             preview_embed.set_footer(text=None)
             try:
-                await self.preview_message.edit(embed=preview_embed, view=view)
+                await send_role_view(
+                    lambda view: self.preview_message.edit(embed=preview_embed, view=view),
+                    self.panel, self.entries, interaction.guild,
+                )
             except Exception:
-                pass
+                logger.warning("Could not update reaction role preview", exc_info=True)
                 
         # LIVE UPDATE IF PUBLISHED!
         if self.message_id > 0:
@@ -669,11 +626,15 @@ class DashboardEditorView(discord.ui.View):
                 if channel:
                     try:
                         msg = await channel.fetch_message(self.message_id)
-                        live_view = DynamicRoleView(self.panel, self.entries, guild)
-                        live_embed, live_attachments = await self.cog._build_panel_embed_and_attachments(self.panel, self.entries)
-                        await msg.edit(embed=live_embed, view=live_view, attachments=live_attachments)
+
+                        async def edit_live(view):
+                            # Built per attempt: uploaded files cannot be reused after a failed request.
+                            live_embed, live_attachments = await self.cog._build_panel_embed_and_attachments(self.panel, self.entries)
+                            await msg.edit(embed=live_embed, view=view, attachments=live_attachments)
+
+                        await send_role_view(edit_live, self.panel, self.entries, guild)
                     except Exception:
-                        pass
+                        logger.warning("Could not update live reaction role panel %s", self.message_id, exc_info=True)
 
     # 1. Row 1
     @discord.ui.button(label="Adjust Text/Image", style=discord.ButtonStyle.primary, row=0)
@@ -691,17 +652,24 @@ class DashboardEditorView(discord.ui.View):
             return
             
         class RemoveSelectView(discord.ui.View):
-            def __init__(self, editor: DashboardEditorView):
+            def __init__(self, editor: DashboardEditorView, guild: Optional[discord.Guild]):
                 super().__init__(timeout=900)
                 options = []
-                for e in editor.entries:
-                    # SAFE UI: No 'emoji=' field used in SelectOption to avoid API crashes
-                    role_id = e['role_id']
-                    e_emoji = e['emoji']
+                for e in editor.entries[:25]:
+                    role = guild.get_role(e['role_id']) if guild else None
+                    name = e.get('label') or (f"@{role.name}" if role else f"Role {e['role_id']}")
+                    # No emoji field here on purpose: this menu must open even
+                    # when a stored emoji is one Discord refuses, so that the
+                    # broken slot can be removed.
+                    parsed = parse_emoji(e['emoji'], guild)
+                    if parsed and is_custom_emoji(parsed):
+                        prefix = f":{parsed.split(':')[1]}:"
+                    else:
+                        prefix = parsed or ""
                     options.append(discord.SelectOption(
-                        label=f"{e_emoji} Slot: {role_id}", 
-                        value=e_emoji,
-                        description=f"Remove this mapping"
+                        label=f"{prefix} {name}".strip()[:100] or "Slot",
+                        value=str(e['role_id']),
+                        description="Remove this mapping"
                     ))
                 self.sel = discord.ui.Select(placeholder="Select slot to drop...", options=options)
                 self.sel.callback = self.callback
@@ -709,10 +677,10 @@ class DashboardEditorView(discord.ui.View):
                 self.editor = editor
                 
             async def callback(self, inter: commands.Context):
-                await db.remove_reaction_role_entry(self.editor.message_id, self.sel.values[0])
+                await db.remove_reaction_role_entry_by_role(self.editor.message_id, int(self.sel.values[0]))
                 await self.editor.refresh(inter)
                 
-        await _safe_send(interaction, "Select the mapping to drop.", view=RemoveSelectView(self), ephemeral=True)
+        await _safe_send(interaction, "Select the mapping to drop.", view=RemoveSelectView(self, interaction.guild), ephemeral=True)
 
     # 2. Row 2 (Toggles)
     @discord.ui.button(label="Toggle Role Removal", style=discord.ButtonStyle.secondary, row=1)
@@ -822,10 +790,12 @@ class MainDashboardHome(discord.ui.View):
                 await inter.response.edit_message(content=None, embed=editor._build_embed(), view=editor)
                 
                 # Send the realtime preview
-                view = DynamicRoleView(editor.panel, editor.entries, inter.guild)
                 preview_embed = await editor._build_preview_embed()
                 preview_embed.set_footer(text=None)
-                editor.preview_message = await inter.followup.send(content="**Live Preview:**", embed=preview_embed, view=view, ephemeral=True)
+                editor.preview_message = await send_role_view(
+                    lambda view: inter.followup.send(content="**Live Preview:**", embed=preview_embed, view=view, ephemeral=True),
+                    editor.panel, editor.entries, inter.guild,
+                )
                 
         await _safe_send(interaction, "Where should the panel be posted?", view=ChSelectView(self.cog), ephemeral=True)
 
@@ -858,10 +828,12 @@ class MainDashboardHome(discord.ui.View):
                 await inter.response.edit_message(content=None, embed=editor._build_embed(), view=editor)
                 
                 # Send the realtime preview
-                view = DynamicRoleView(editor.panel, editor.entries, inter.guild)
                 preview_embed = await editor._build_preview_embed()
                 preview_embed.set_footer(text=None)
-                editor.preview_message = await inter.followup.send(content="**Live Preview:**", embed=preview_embed, view=view, ephemeral=True)
+                editor.preview_message = await send_role_view(
+                    lambda view: inter.followup.send(content="**Live Preview:**", embed=preview_embed, view=view, ephemeral=True),
+                    editor.panel, editor.entries, inter.guild,
+                )
                 
         await _safe_send(interaction, "Select a panel to edit:", view=EditSelView(self.cog, panels, interaction.guild), ephemeral=True)
 
@@ -883,7 +855,7 @@ class ReactionRolesCog(commands.Cog):
         if entries and panel.get('include_overview', False):
             desc += "\n\n**Roles:**\n"
             for e in entries:
-                desc += f"{e['emoji']} -> <@&{e['role_id']}>\n"
+                desc += f"{emoji_as_text(e['emoji'])} -> <@&{e['role_id']}>\n"
 
         embed = discord.Embed(
             title=(panel.get('title') or None),
@@ -985,8 +957,6 @@ class ReactionRolesCog(commands.Cog):
             if validation_error:
                 await _safe_send(interaction, validation_error, ephemeral=True)
                 return
-            embed, embed_attachments = await self._build_panel_embed_and_attachments(panel, entries)
-            
             panel_to_use = dict(panel)
             if message_id < 0:
                 target_msg = await channel.send("Publishing panel...")
@@ -999,8 +969,13 @@ class ReactionRolesCog(commands.Cog):
                     panel_to_use['message_id'] = target_msg.id
                 
             # ATTACH UI components
-            view = DynamicRoleView(panel_to_use, entries, guild)
-            await target_msg.edit(content=None, embed=embed, view=view, attachments=embed_attachments)
+
+            async def edit_target(view):
+                # Built per attempt: uploaded files cannot be reused after a failed request.
+                embed, embed_attachments = await self._build_panel_embed_and_attachments(panel, entries)
+                await target_msg.edit(content=None, embed=embed, view=view, attachments=embed_attachments)
+
+            await send_role_view(edit_target, panel_to_use, entries, guild)
             if panel_to_use['message_id'] != message_id:
                 await self._migrate_panel_message_id(message_id, panel_to_use['message_id'])
                 persisted_message_id = panel_to_use['message_id']
