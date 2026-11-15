@@ -3,15 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#5865F2">
   <title>Ataraxia Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌸</text></svg>">
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
+  <div class="bg-animation" aria-hidden="true"></div>
   <header>
-    <a class="brand" href="./">Ataraxia <span>Dashboard</span></a>
-    <div id="user"></div>
+    <nav>
+      <a class="logo" href="./">
+        <span class="logo-emoji">🌸</span><span class="logo-text">Ataraxia</span><span class="logo-tag">Dashboard</span>
+      </a>
+      <div id="user"></div>
+    </nav>
   </header>
-  <main id="app"><p class="muted">Loading…</p></main>
+  <main id="app"><p class="muted loading">Loading…</p></main>
+  <footer>
+    <a href="https://ataraxia-bot.com/">Home</a>
+    <a href="https://ataraxia-bot.com/commands">Commands</a>
+    <a href="https://ataraxia-bot.com/support">Support</a>
+    <a href="https://ataraxia-bot.com/privacy">Privacy</a>
+  </footer>
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="static/app.js"></script>
 </body>

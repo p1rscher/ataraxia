@@ -71,8 +71,19 @@ async function run(action, successMessage) {
 }
 
 const guildPath = (suffix) => "api/guilds/" + state.guild.id + (suffix || "");
-const roleName = (id) => { const r = state.guild.roles.find((x) => x.id === id); return r ? "@" + r.name : "deleted role (" + id + ")"; };
-const channelName = (id) => { const c = state.guild.channels.find((x) => x.id === id); return c ? "#" + c.name : "deleted channel (" + id + ")"; };
+const roleName = (id) => {
+  const r = state.guild.roles.find((x) => x.id === id);
+  const color = r && r.color ? "#" + r.color.toString(16).padStart(6, "0") : null;
+  return h("span", { class: "chip" }, h("span", { class: "dot", style: color ? "background:" + color : null }),
+    r ? "@" + r.name : "deleted role (" + id + ")");
+};
+const channelName = (id) => {
+  const c = state.guild.channels.find((x) => x.id === id);
+  return h("span", { class: "chip" }, c ? (c.type === "voice" || c.type === "stage" ? "🔊 " : "#") + c.name : "deleted channel (" + id + ")");
+};
+const guildIcon = (g, size) => g.icon
+  ? h("img", { class: "icon", src: "https://cdn.discordapp.com/icons/" + g.id + "/" + g.icon + ".png?size=" + (size || 128), alt: "" })
+  : h("span", { class: "icon" }, g.name.slice(0, 1).toUpperCase());
 
 function roleSelect(onlyAssignable, selected) {
   const roles = state.guild.roles.filter((r) => !r.everyone && (!onlyAssignable || r.assignable));
@@ -94,7 +105,10 @@ function renderUser() {
   const box = document.getElementById("user");
   box.replaceChildren();
   if (!state.me) return;
-  box.append(h("span", {}, state.me.username), h("button", {
+  const avatar = state.me.avatar
+    ? h("img", { class: "avatar", src: "https://cdn.discordapp.com/avatars/" + state.me.id + "/" + state.me.avatar + ".png?size=64", alt: "" })
+    : h("span", { class: "avatar" }, state.me.username.slice(0, 1).toUpperCase());
+  box.append(avatar, h("span", { class: "name" }, state.me.username), h("button", { class: "ghost",
     onclick: async () => {
       await run(() => api("POST", "auth/logout"));
       state.me = null; state.guild = null;
@@ -106,26 +120,31 @@ function renderUser() {
 function renderLogin() {
   renderUser();
   const reason = new URLSearchParams(location.search).get("login");
-  show(app, h("div", { class: "card center" },
-    h("h1", {}, "Ataraxia Dashboard"),
-    h("p", { class: "muted" }, "Log in with Discord to change the settings of the servers you administer."),
-    reason === "failed" ? h("p", { style: "color: var(--danger)" }, "The login did not complete. Please try again.") : null,
-    h("a", { class: "button primary", href: "auth/login" }, "Log in with Discord")));
+  const perk = (icon, title, text) => h("div", { class: "card" }, h("div", { class: "icon" }, icon), h("h2", {}, title), h("p", {}, text));
+  show(app,
+    h("section", { class: "hero" },
+      h("h1", { class: "gradient-text" }, "Your server,", h("br"), "your rules"),
+      h("p", {}, "Set up Ataraxia from your browser. Log in with Discord and pick one of the servers you administer."),
+      reason === "failed" ? h("p", { class: "error" }, "The login did not complete. Please try again.") : null,
+      h("a", { class: "button primary big", href: "auth/login" }, "Log in with Discord")),
+    h("section", { class: "perks" },
+      perk("📈", "Leveling", "XP amounts, cooldowns, multipliers and the roles members earn."),
+      perk("⚙️", "Automation", "Auto roles for new members and bots, and where the bot keeps its logs."),
+      perk("🛡️", "Admins only", "You only ever see the servers where you are an administrator.")));
 }
 
 function renderGuilds() {
   state.guild = null;
-  const icon = (g) => g.icon
-    ? h("img", { src: "https://cdn.discordapp.com/icons/" + g.id + "/" + g.icon + ".png?size=96", alt: "" })
-    : h("span", { class: "ph" }, g.name.slice(0, 1).toUpperCase());
-  show(app, 
-    h("h1", {}, "Your servers"),
-    h("p", { class: "hint" }, "Servers where you are an administrator."),
+  const card = (g) => g.bot_present
+    ? h("button", { class: "guild", onclick: () => openGuild(g.id) }, guildIcon(g),
+        h("span", {}, h("span", { class: "name" }, g.name), h("small", {}, "Open settings →")))
+    : h("a", { class: "button guild absent", href: state.invite + "&guild_id=" + g.id, target: "_blank", rel: "noopener" }, guildIcon(g),
+        h("span", {}, h("span", { class: "name" }, g.name), h("small", {}, "+ Add Ataraxia")));
+  show(app,
+    h("h1", { class: "gradient-text" }, "Your servers"),
+    h("p", { class: "hint" }, "Pick a server to change its settings. Only servers where you are an administrator are listed."),
     state.guilds.length === 0 ? h("div", { class: "card" }, "You are not an administrator of any server.") : null,
-    h("div", { class: "guilds" }, state.guilds.map((g) => g.bot_present
-      ? h("button", { class: "guild", onclick: () => openGuild(g.id) }, icon(g), h("span", {}, g.name, h("small", {}, "Open settings")))
-      : h("a", { class: "button guild", href: state.invite + "&guild_id=" + g.id, target: "_blank", rel: "noopener" },
-          icon(g), h("span", {}, g.name, h("small", {}, "Add Ataraxia to this server"))))));
+    h("div", { class: "guilds" }, state.guilds.map(card)));
 }
 
 async function openGuild(id) {
@@ -137,16 +156,18 @@ async function openGuild(id) {
 }
 
 const TABS = [
-  ["xp", "XP", tabXp], ["multipliers", "Multipliers", tabMultipliers], ["logs", "Log channels", tabLogs],
-  ["level-roles", "Level roles", tabLevelRoles], ["auto-roles", "Auto roles", tabAutoRoles],
-  ["leaderboard", "Leaderboard", tabLeaderboard],
+  ["xp", "📈 XP", tabXp], ["multipliers", "✨ Multipliers", tabMultipliers], ["logs", "📋 Log channels", tabLogs],
+  ["level-roles", "🏅 Level roles", tabLevelRoles], ["auto-roles", "👋 Auto roles", tabAutoRoles],
+  ["leaderboard", "🏆 Leaderboard", tabLeaderboard],
 ];
 
 function renderGuild() {
   const body = h("div", {}, h("p", { class: "muted" }, "Loading…"));
   show(app, 
-    h("button", { onclick: renderGuilds }, "← All servers"),
-    h("h1", { style: "margin-top: 14px" }, state.guild.name),
+    h("button", { class: "ghost", onclick: renderGuilds }, "← All servers"),
+    h("div", { class: "guild-head" }, guildIcon(state.guild, 128),
+      h("div", {}, h("h1", {}, state.guild.name),
+        h("span", { class: "muted" }, state.guild.roles.length + " roles · " + state.guild.channels.length + " channels"))),
     h("nav", { class: "tabs" }, TABS.map(([id, label]) => h("button", {
       class: id === state.tab ? "active" : "",
       onclick: () => { state.tab = id; renderGuild(); },
@@ -201,7 +222,7 @@ async function tabMultipliers(body) {
       const value = h("input", { type: "number", min: 0, max: 10, step: 0.05, value: 2 });
       return h("div", { class: "card" }, h("h2", {}, title), h("p", { class: "hint" }, hint),
         h("ul", { class: "list" }, data[kind].length === 0 ? h("li", { class: "muted" }, "None set") : null,
-          data[kind].map((m) => h("li", {}, h("span", {}, nameOf(m.id), " — ×", m.multiplier),
+          data[kind].map((m) => h("li", {}, h("span", {}, nameOf(m.id), h("span", { class: "pill" }, "×" + m.multiplier)),
             h("button", { class: "danger", onclick: async () => {
               const next = await run(() => api("DELETE", guildPath("/multipliers/" + kind + "/" + m.id)), "Removed");
               if (next) draw(next);
@@ -250,7 +271,7 @@ async function tabLevelRoles(body) {
       h("h2", {}, "Level roles"),
       h("p", { class: "hint" }, "Roles members receive when they reach a level. Only roles below the bot's own role can be given."),
       h("ul", { class: "list" }, rows.length === 0 ? h("li", { class: "muted" }, "None set") : null,
-        rows.map((r) => h("li", {}, h("span", {}, "Level ", r.level, " → ", roleName(r.role_id)),
+        rows.map((r) => h("li", {}, h("span", {}, h("span", { class: "pill", style: "margin: 0 12px 0 0" }, "Level " + r.level), roleName(r.role_id)),
           h("button", { class: "danger", onclick: async () => {
             const next = await run(() => api("DELETE", guildPath("/level-roles/" + r.level)), "Removed");
             if (next) draw(next);
@@ -294,12 +315,17 @@ async function tabAutoRoles(body) {
 
 async function tabLeaderboard(body) {
   const data = await api("GET", guildPath("/leaderboard?limit=50"));
+  const top = data.entries.length ? Math.max(1, data.entries[0].xp) : 1;
+  const medals = { 1: "🥇", 2: "🥈", 3: "🥉" };
   show(body, h("div", { class: "card" },
-    h("h2", {}, "Leaderboard"), h("p", { class: "hint" }, data.total + (data.total === 1 ? " member has" : " members have") + " earned XP. Recent XP can take a minute to appear."),
-    data.entries.length === 0 ? h("p", { class: "muted" }, "Nobody has earned XP yet.") : h("table", {},
-      h("thead", {}, h("tr", {}, h("th", {}, "#"), h("th", {}, "Member"), h("th", { class: "num" }, "Level"), h("th", { class: "num" }, "XP"))),
-      h("tbody", {}, data.entries.map((e) => h("tr", {}, h("td", {}, e.rank), h("td", {}, e.username || e.user_id),
-        h("td", { class: "num" }, e.level), h("td", { class: "num" }, e.xp.toLocaleString())))))));
+    h("h2", {}, "Leaderboard"),
+    h("p", { class: "hint" }, data.total + (data.total === 1 ? " member has" : " members have") + " earned XP. Recent XP can take a minute to appear."),
+    data.entries.length === 0 ? h("p", { class: "muted" }, "Nobody has earned XP yet.") : h("ol", { class: "board" },
+      data.entries.map((e) => h("li", {},
+        h("span", { class: "bar", style: "width:" + Math.round((e.xp / top) * 100) + "%" }),
+        h("span", { class: "rank" }, medals[e.rank] || e.rank),
+        h("span", { class: "who" }, e.username || "User " + e.user_id),
+        h("span", { class: "score" }, e.xp.toLocaleString() + " XP", h("small", {}, "Level " + e.level)))))));
 }
 
 // --------------------------------------------------------------------- start

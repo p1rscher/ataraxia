@@ -38,7 +38,14 @@ def main():
             await conn.execute(
                 "INSERT INTO discord_servers (guild_id, server_name) VALUES ($1, 'Alpha') ON CONFLICT DO NOTHING",
                 int(GUILD_A))
-        await botdb.add_xp(42, int(GUILD_A), 900)
+        async with botdb._pool.acquire() as conn:
+            if not await conn.fetchval("SELECT 1 FROM user_levels WHERE guild_id = $1 LIMIT 1", int(GUILD_A)):
+                demo = [("Mira", 18250, 21), ("Jonas", 12980, 17), ("Lumi", 9410, 14), ("Okabe", 5120, 10), ("Sen", 1830, 5)]
+                for index, (name, xp, level) in enumerate(demo, start=1):
+                    await conn.execute("INSERT INTO discord_users (user_id, username, global_name) VALUES ($1, $2, $2) "
+                                       "ON CONFLICT DO NOTHING", 1000 + index, name)
+                    await conn.execute("INSERT INTO user_levels (user_id, guild_id, xp, level) VALUES ($1, $2, $3, $4)",
+                                       1000 + index, int(GUILD_A), xp, level)
         await botdb.close_db()
 
     asyncio.run(prepare())
