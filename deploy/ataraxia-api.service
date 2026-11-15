@@ -1,0 +1,22 @@
+[Unit]
+Description=Ataraxia Dashboard API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/serenity/ataraxia
+EnvironmentFile=/root/serenity/ataraxia/.env
+# Listens on localhost only; nginx is the public entry point.
+ExecStart=/root/serenity/venv-api/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ataraxia-api
+MemoryMax=200M
+CPUQuota=30%
+
+[Install]
+WantedBy=multi-user.target

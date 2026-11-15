@@ -106,43 +106,36 @@ See [COMMANDS.md](COMMANDS.md) for the complete command list.
 
 ## 🏗️ Architecture
 
-Ataraxia consists of three main components:
+Ataraxia consists of two components:
 
-1. **Discord Bot** (Python) - Handles Discord events and commands
-2. **FastAPI Backend** (Python) - REST API for the dashboard
-3. **Next.js Dashboard** (TypeScript) - Web interface for configuration
+1. **Discord Bot** (`bot/`, Python) - Handles Discord events and commands
+2. **Dashboard API** (`api/`, Python/FastAPI) - Web page and REST API for configuration
 
-All components share a PostgreSQL database for data persistence.
+Both share a PostgreSQL database for data persistence.
 
 ```
-Discord Bot ←→ PostgreSQL Database ←→ FastAPI Backend ←→ Next.js Dashboard
+Discord Bot ←→ PostgreSQL Database ←→ Dashboard API ←→ Browser
 ```
 
 For details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## 🌐 Dashboard
 
-The web dashboard provides a user-friendly interface for:
-- Configuring XP settings
-- Managing multipliers and level roles
-- Viewing leaderboards
-- Configuring voice XP requirements
-- Server analytics
+Server administrators log in with Discord and can then, for each of their servers:
+- Configure XP settings and voice XP requirements
+- Manage multipliers, level roles and auto roles
+- Set log channels
+- View the leaderboard
 
 ### Starting the Dashboard
 
 ```bash
-# Start FastAPI backend
-cd api
-uvicorn main:app --reload
-
-# Start Next.js dashboard (in another terminal)
-cd dashboard
-npm install
-npm run dev
+pip install -r api/requirements.txt
+uvicorn api.main:app --port 8000
 ```
 
-Visit `http://localhost:3000` to access the dashboard.
+Visit `http://localhost:8000` to access the dashboard. Setup (Discord client
+secret, redirect URL), endpoints and tests are described in [API.md](API.md).
 
 ## 🛠️ Development
 

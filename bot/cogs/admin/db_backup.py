@@ -182,8 +182,13 @@ class DatabaseBackupCog(commands.Cog):
         timestamp = datetime.now(timezone.utc)
         backup_path = backup_dir / f"postgres_full_{timestamp.strftime('%Y%m%d_%H%M%S')}.sql"
 
+        # pg_dump must not be older than the database server. Where several
+        # PostgreSQL versions are installed, plain "pg_dump" may resolve to the
+        # wrong one; PG_DUMP_PATH selects a specific binary.
+        pg_dump_path = (os.getenv("PG_DUMP_PATH", "") or "").strip() or "pg_dump"
+
         cmd = [
-            "pg_dump",
+            pg_dump_path,
             "--format=plain",
             "--encoding=UTF8",
             "--no-owner",

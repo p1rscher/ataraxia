@@ -1033,6 +1033,18 @@ async def init_db():
         except Exception:
             pass
 
+        # Settings changed through the web dashboard (see api/). The bot polls
+        # this table to drop its cached copy of a guild's settings.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_changes (
+                guild_id BIGINT NOT NULL,
+                scope TEXT NOT NULL,
+                changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+                changed_by BIGINT,
+                PRIMARY KEY (guild_id, scope)
+            )
+        """)
+
     logger.info("Database initialized successfully!")
 
 async def close_db():
@@ -1815,6 +1827,15 @@ async def remove_reaction_role_entry(message_id: int, emoji: str):
         result = await conn.execute(
             "DELETE FROM reaction_role_entries WHERE message_id = $1 AND emoji = $2",
             message_id, emoji
+        )
+        return result == "DELETE 1"
+
+async def remove_reaction_role_entry_by_role(message_id: int, role_id: int):
+    """Delete the mapping for one role from a panel."""
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM reaction_role_entries WHERE message_id = $1 AND role_id = $2",
+            message_id, role_id
         )
         return result == "DELETE 1"
 
@@ -4364,3 +4385,21 @@ async def get_ticket_panels(guild_id: int):
 async def remove_ticket_panel(message_id: int):
     async with _pool.acquire() as conn:
         await conn.execute("DELETE FROM ticket_panels WHERE message_id = $1", message_id)
+
+
+# ==================== WEB DASHBOARD ====================
+
+async def get_database_time() -> datetime:
+    """Current time according to the database server."""
+    async with _pool.acquire() as conn:
+        return await conn.fetchval("SELECT clock_timestamp()")
+
+
+async def get_dashboard_changes(since: datetime) -> list[dict]:
+    """Settings changed through the web dashboard after ``since``."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT guild_id, scope, changed_at FROM dashboard_changes WHERE changed_at > $1 ORDER BY changed_at",
+            since,
+        )
+    return [dict(row) for row in rows]
