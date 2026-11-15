@@ -211,7 +211,7 @@ class XPSettingsCog(commands.Cog):
 
         embed.add_field(
             name="Formular for Level XP",
-            value="XP needed for level: 15 * (level ^ 2) + 60 * level + 25"
+            value="XP needed for level: 40 * (level ^ 2) + 60 * level) * 1.01 ^ level"
         )
         
         embed.set_footer(text="Use /xp commands to change settings")
