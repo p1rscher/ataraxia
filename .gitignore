@@ -27,3 +27,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated website pages (website/generate_commands.py)
+website/build/
